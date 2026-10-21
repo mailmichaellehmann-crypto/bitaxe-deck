@@ -1,0 +1,32 @@
+menu "Bitaxe Deck"
+    config DECK_OTA_REPO
+        string "GitHub-Repository für Updates (besitzer/name)"
+        default "mailmichaellehmann-crypto/bitaxe-deck"
+        help
+            Das Display sucht unter https://github.com/<besitzer>/<name>/releases/latest
+            nach der Datei bitaxe_deck.bin.
+
+    config DECK_DISPLAY_FLIP
+        bool "Display um 180° drehen"
+        default n
+        help
+            Dreht Bild und Touch um 180°, falls das Display auf dem Kopf steht.
+    config DECK_PERF_LOG
+        bool "Bildrate im Log ausgeben"
+        default n
+        help
+            Gibt alle 2 s Bilder pro Sekunde und Renderzeiten über die serielle Konsole aus.
+
+    config DECK_PERF_BENCH
+        bool "Automatisch durch die Karten blättern (Messung)"
+        depends on DECK_PERF_LOG
+        default n
+
+    config DECK_SNAPSHOT
+        bool "Screenshots aller Karten über USB ausgeben (statt Messung)"
+        depends on DECK_PERF_BENCH
+        default n
+        help
+            Wartet auf Live-Daten und schickt dann jede Karte als Bild über die serielle
+            Konsole (Base64, RGB565). tools/snapshots.py macht daraus PNG-Dateien.
+endmenu

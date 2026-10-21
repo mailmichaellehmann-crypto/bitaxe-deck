@@ -1,0 +1,11 @@
+{
+  "name": "bitaxe-deck",
+  "version": "1.0.0",
+  "description": "Persönliches Bitcoin- & Bitaxe-Mining-Dashboard im Braiins-Deck-Stil",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" }
+}

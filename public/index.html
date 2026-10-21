@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bitaxe Deck</title>
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="2" y="2" width="28" height="28" rx="7" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M9 21 L16 9 L23 21 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        <circle cx="16" cy="17" r="2.2" fill="currentColor"/>
+      </svg>
+      <div>
+        <div class="brand-name">BITAXE<span>DECK</span></div>
+        <div class="brand-sub">Solo Mining Control</div>
+      </div>
+    </div>
+
+    <nav class="tabs" aria-label="Bereiche">
+      <a href="#overview" class="tab active">Übersicht</a>
+      <a href="#miner" class="tab">Miner</a>
+      <a href="#network" class="tab">Netzwerk</a>
+      <a href="#tools" class="tab">Rechner</a>
+    </nav>
+
+    <div class="topbar-right">
+      <div class="pill" id="pill-api" title="Status der Marktdaten"><i class="dot"></i><span>Markt</span></div>
+      <div class="pill" id="pill-miner" title="Status des Bitaxe"><i class="dot"></i><span>Bitaxe</span></div>
+      <div class="clock mono" id="clock">--:--:--</div>
+      <button class="icon-btn" id="btn-settings" aria-label="Einstellungen" title="Einstellungen">
+        <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- KPI-Leiste -->
+    <section id="overview" class="kpis">
+      <article class="card kpi kpi-price" style="--d:0">
+        <div class="kpi-label">BTC / USD</div>
+        <div class="kpi-value mono" id="price-usd">—</div>
+        <div class="kpi-foot">
+          <span class="chg" id="price-chg">—</span>
+          <span class="muted mono" id="price-eur">— €</span>
+        </div>
+        <canvas class="spark" id="spark-price" aria-hidden="true"></canvas>
+      </article>
+      <article class="card kpi" style="--d:1">
+        <div class="kpi-label">Blockhöhe</div>
+        <div class="kpi-value mono" id="block-height">—</div>
+        <div class="kpi-foot"><span class="muted" id="block-age">—</span></div>
+      </article>
+      <article class="card kpi" style="--d:2">
+        <div class="kpi-label">Netzwerk-Hashrate</div>
+        <div class="kpi-value mono" id="net-hash">—</div>
+        <div class="kpi-foot"><span class="muted">3-Tage-Schätzung</span></div>
+      </article>
+      <article class="card kpi" style="--d:3">
+        <div class="kpi-label">Difficulty</div>
+        <div class="kpi-value mono" id="net-diff">—</div>
+        <div class="kpi-foot"><span class="chg" id="diff-next">—</span><span class="muted">nächste Anpassung</span></div>
+      </article>
+      <article class="card kpi kpi-fees" style="--d:4">
+        <div class="kpi-label">Gebühren <span class="muted">sat/vB</span></div>
+        <div class="fees">
+          <div><b class="mono" id="fee-fast">—</b><small>Schnell</small></div>
+          <div><b class="mono" id="fee-half">—</b><small>30 Min</small></div>
+          <div><b class="mono" id="fee-hour">—</b><small>1 Std</small></div>
+          <div><b class="mono" id="fee-eco">—</b><small>Eco</small></div>
+        </div>
+      </article>
+    </section>
+
+    <!-- Preis-Chart + Epoche -->
+    <section class="row row-2-1">
+      <article class="card chart-card" style="--d:5">
+        <header class="card-head">
+          <div>
+            <h2>Bitcoin-Preis</h2>
+            <div class="sub"><span class="mono" id="range-hilo">—</span></div>
+          </div>
+          <div class="seg" id="price-range" role="tablist">
+            <button data-days="1" class="on">24H</button>
+            <button data-days="7">7T</button>
+            <button data-days="30">30T</button>
+            <button data-days="365">1J</button>
+          </div>
+        </header>
+        <div class="chart-box tall"><canvas id="chart-price"></canvas><div class="chart-msg" id="price-msg"></div></div>
+      </article>
+
+      <article class="card epoch" style="--d:6">
+        <header class="card-head"><h2>Epochen</h2></header>
+        <div class="epoch-block">
+          <div class="ring" id="ring-diff" style="--p:0">
+            <svg viewBox="0 0 120 120"><defs><linearGradient id="ring-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--violet-300)"/><stop offset=".5" stop-color="var(--violet-500)"/><stop offset="1" stop-color="var(--accent-2)"/></linearGradient></defs><circle class="ring-bg" cx="60" cy="60" r="52"/><circle class="ring-fg" cx="60" cy="60" r="52"/></svg>
+            <div class="ring-text"><b class="mono" id="diff-pct">—</b><small>Retarget</small></div>
+          </div>
+          <dl class="kv">
+            <div><dt>Verbleibend</dt><dd class="mono" id="diff-remaining">—</dd></div>
+            <div><dt>Geschätzt am</dt><dd class="mono" id="diff-date">—</dd></div>
+            <div><dt>Ø Blockzeit</dt><dd class="mono" id="diff-avg">—</dd></div>
+          </dl>
+        </div>
+        <div class="divider"></div>
+        <div class="halving">
+          <div class="kpi-label">Halving-Countdown <span class="muted mono" id="halving-block">—</span></div>
+          <div class="countdown mono" id="halving-countdown">
+            <div><b>—</b><small>Tage</small></div><div><b>—</b><small>Std</small></div><div><b>—</b><small>Min</small></div><div><b>—</b><small>Sek</small></div>
+          </div>
+          <div class="bar"><i id="halving-bar"></i></div>
+          <div class="sub"><span id="halving-sub">—</span></div>
+        </div>
+      </article>
+    </section>
+
+    <!-- Bitaxe -->
+    <section id="miner" class="row">
+      <article class="card miner" style="--d:7">
+        <header class="card-head">
+          <div class="miner-title">
+            <h2><span id="miner-name">Bitaxe Gamma 601</span></h2>
+            <div class="sub mono" id="miner-meta">—</div>
+          </div>
+          <div class="miner-actions">
+            <span class="badge" id="miner-badge">—</span>
+            <button class="btn ghost" id="btn-miner-config">Gerät konfigurieren</button>
+          </div>
+        </header>
+        <div class="banner" id="miner-banner" hidden></div>
+
+        <div class="miner-grid">
+          <div class="gauge-wrap">
+            <div class="gauge" id="gauge-hash" style="--p:0">
+              <svg viewBox="0 0 200 200">
+                <defs>
+                  <linearGradient id="g-grad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stop-color="var(--accent-strong)"/><stop offset="1" stop-color="var(--accent-2)"/>
+                  </linearGradient>
+                </defs>
+                <circle class="g-bg" cx="100" cy="100" r="84"/>
+                <circle class="g-fg" cx="100" cy="100" r="84"/>
+              </svg>
+              <div class="gauge-text">
+                <small>Hashrate</small>
+                <b class="mono" id="m-hash">—</b>
+                <span class="mono muted" id="m-hash-unit">TH/s</span>
+                <span class="mono tiny" id="m-hash-exp">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="stats">
+            <div class="stat"><small>ASIC-Temp</small><b class="mono" id="m-temp">—</b><i class="meter"><em id="m-temp-bar"></em></i></div>
+            <div class="stat"><small>VR-Temp</small><b class="mono" id="m-vrtemp">—</b><i class="meter"><em id="m-vrtemp-bar"></em></i></div>
+            <div class="stat"><small>Leistung</small><b class="mono" id="m-power">—</b><span class="tiny mono" id="m-power-sub">—</span></div>
+            <div class="stat"><small>Effizienz</small><b class="mono" id="m-eff">—</b><span class="tiny mono">J/TH</span></div>
+            <div class="stat"><small>Best Difficulty</small><b class="mono accent" id="m-best">—</b><span class="tiny mono" id="m-best-session">—</span></div>
+            <div class="stat"><small>Shares</small><b class="mono" id="m-shares">—</b><span class="tiny mono" id="m-rejected">—</span></div>
+            <div class="stat"><small>Uptime</small><b class="mono" id="m-uptime">—</b><span class="tiny mono" id="m-wifi">—</span></div>
+            <div class="stat"><small>Lüfter</small><b class="mono" id="m-fan">—</b><span class="tiny mono" id="m-fanrpm">—</span></div>
+            <div class="stat"><small>Frequenz</small><b class="mono" id="m-freq">—</b><span class="tiny mono">MHz</span></div>
+            <div class="stat"><small>Core-Spannung</small><b class="mono" id="m-cv">—</b><span class="tiny mono" id="m-cv-sub">—</span></div>
+          </div>
+        </div>
+
+        <div class="pool-line">
+          <span class="muted">Pool</span><span class="mono" id="m-pool">—</span>
+          <span class="muted">Worker</span><span class="mono trunc" id="m-worker">—</span>
+          <span class="muted">Pool-Diff</span><span class="mono" id="m-pooldiff">—</span>
+        </div>
+
+        <div class="card-head sub-head">
+          <h3>Verlauf <span class="muted" id="hist-info">—</span></h3>
+          <div class="seg" id="hist-range">
+            <button data-h="1" class="on">1H</button>
+            <button data-h="6">6H</button>
+            <button data-h="24">24H</button>
+          </div>
+        </div>
+        <div class="chart-box"><canvas id="chart-miner"></canvas><div class="chart-msg" id="miner-msg"></div></div>
+      </article>
+    </section>
+
+    <!-- Solo-Chance + Strom -->
+    <section id="tools" class="row row-1-1-1">
+      <article class="card lottery" style="--d:8">
+        <header class="card-head"><h2>Solo-Block-Chance</h2><span class="badge soft" id="lot-hash">—</span></header>
+        <div class="odds">
+          <div class="odds-main">
+            <small>Chance pro Jahr</small>
+            <b class="mono accent" id="lot-year">—</b>
+            <span class="mono muted" id="lot-year-1in">—</span>
+          </div>
+          <div class="odds-list">
+            <div><span>Pro Tag</span><b class="mono" id="lot-day">—</b><i class="mono" id="lot-day-1in">—</i></div>
+            <div><span>Pro Woche</span><b class="mono" id="lot-week">—</b><i class="mono" id="lot-week-1in">—</i></div>
+            <div><span>Pro Monat</span><b class="mono" id="lot-month">—</b><i class="mono" id="lot-month-1in">—</i></div>
+          </div>
+        </div>
+        <dl class="kv kv-tight">
+          <div><dt>Ø Zeit bis Block</dt><dd class="mono" id="lot-eta">—</dd></div>
+          <div><dt>Blockbelohnung</dt><dd class="mono" id="lot-reward">—</dd></div>
+          <div><dt>Erwartungswert/Tag</dt><dd class="mono" id="lot-ev">—</dd></div>
+        </dl>
+        <div class="best-vs">
+          <div class="kpi-label">Best Diff vs. Netzwerk-Difficulty</div>
+          <div class="bar log"><i id="best-bar"></i></div>
+          <div class="sub mono" id="best-sub">—</div>
+        </div>
+      </article>
+
+      <article class="card power" style="--d:9">
+        <header class="card-head"><h2>Strom &amp; Effizienz</h2></header>
+        <div class="form-grid">
+          <label>Strompreis <span class="muted">€/kWh</span>
+            <input type="number" id="in-kwh" min="0" step="0.01" value="0.35" inputmode="decimal">
+          </label>
+          <label>Leistung <span class="muted">W</span>
+            <input type="number" id="in-watt" min="0" step="0.1" placeholder="vom Gerät" inputmode="decimal">
+          </label>
+        </div>
+        <div class="cost-grid">
+          <div><small>Pro Tag</small><b class="mono" id="cost-day">—</b><span class="tiny mono" id="kwh-day">—</span></div>
+          <div><small>Pro Monat</small><b class="mono" id="cost-month">—</b><span class="tiny mono" id="kwh-month">—</span></div>
+          <div><small>Pro Jahr</small><b class="mono" id="cost-year">—</b><span class="tiny mono" id="kwh-year">—</span></div>
+        </div>
+        <dl class="kv kv-tight">
+          <div><dt>Effizienz</dt><dd class="mono" id="eff-wth">—</dd></div>
+          <div><dt>Kosten pro TH·Tag</dt><dd class="mono" id="eff-th-day">—</dd></div>
+          <div><dt>Erwartungswert/Tag (Solo)</dt><dd class="mono" id="ev-eur">—</dd></div>
+          <div><dt>„Ticketpreis“ pro 1 % Jahreschance</dt><dd class="mono" id="ticket">—</dd></div>
+        </dl>
+      </article>
+
+      <article class="card converter" style="--d:10">
+        <header class="card-head"><h2>Sats-Umrechner</h2></header>
+        <div class="conv">
+          <label><span>SATS</span><input type="text" id="cv-sats" inputmode="decimal" value="100000"></label>
+          <label><span>BTC</span><input type="text" id="cv-btc" inputmode="decimal"></label>
+          <label><span>USD</span><input type="text" id="cv-usd" inputmode="decimal"></label>
+          <label><span>EUR</span><input type="text" id="cv-eur" inputmode="decimal"></label>
+        </div>
+        <div class="moscow">
+          <div><small>Moscow Time</small><b class="mono" id="moscow-usd">—</b><span class="tiny">sats / $1</span></div>
+          <div><small>sats / 1 €</small><b class="mono" id="moscow-eur">—</b><span class="tiny">sats / €1</span></div>
+        </div>
+      </article>
+    </section>
+
+    <!-- Letzte Blöcke -->
+    <section id="network" class="row">
+      <article class="card" style="--d:11">
+        <header class="card-head"><h2>Letzte Blöcke</h2><a class="link" href="https://mempool.space" target="_blank" rel="noopener">mempool.space ↗</a></header>
+        <div class="blocks" id="blocks"></div>
+      </article>
+    </section>
+
+    <footer class="foot">
+      <span>Daten: CoinGecko · mempool.space · AxeOS-API</span>
+      <span class="mono" id="last-update">—</span>
+    </footer>
+  </main>
+
+  <!-- Einstellungen -->
+  <dialog id="dlg-settings" class="dialog">
+    <form method="dialog" id="form-settings">
+      <header class="card-head"><h2>Einstellungen</h2><button class="icon-btn" value="cancel" aria-label="Schließen">✕</button></header>
+      <label>Bitaxe-Adresse (IP oder Hostname)
+        <input type="text" id="set-host" placeholder="z. B. 192.168.1.42 oder bitaxe.local" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="hint">Steht im AxeOS-Webinterface oder in deinem Router. Wird nur lokal in diesem Browser gespeichert.</p>
+      <div class="test-row">
+        <button type="button" class="btn ghost" id="btn-test">Verbindung testen</button>
+        <span id="test-result" class="mono tiny"></span>
+      </div>
+      <label>Abfrage-Intervall
+        <select id="set-interval">
+          <option value="3000">3 Sekunden</option>
+          <option value="5000" selected>5 Sekunden</option>
+          <option value="10000">10 Sekunden</option>
+          <option value="30000">30 Sekunden</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="set-demo"> Demo-Modus erzwingen (simulierte Daten)</label>
+      <div class="dialog-foot">
+        <button type="button" class="btn danger ghost" id="btn-clear">Verlauf löschen</button>
+        <span class="spacer"></span>
+        <button class="btn ghost" value="cancel">Abbrechen</button>
+        <button class="btn primary" value="save" id="btn-save">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
