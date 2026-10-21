@@ -66,7 +66,7 @@ void settings_load(void)
     if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;
     nvs_close(h);
     if (g_settings.chart_range > 3) g_settings.chart_range = 0;
-    if (g_settings.chart_style > 1) g_settings.chart_style = 0; // früherer Stil „Verlauf“ -> Punkte
+    if (g_settings.chart_style > 2) g_settings.chart_style = 0;
     if (g_settings.brightness < 5 || g_settings.brightness > 100) g_settings.brightness = 80;
 }
 

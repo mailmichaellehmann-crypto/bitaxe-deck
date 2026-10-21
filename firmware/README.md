@@ -18,7 +18,7 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 |---|-------|--------|
 | 1 | Preis | Kurs groß, 24h-Änderung, Kurs in der anderen Währung, Kursverlauf als Pixel-Mosaik |
 | 2 | USD & EUR | beide Kurse mit 24h-Änderung |
-| 3 | Chart | geglätteter Kursverlauf mit Glow, Hoch/Tief, Preis-Label und pulsierendem Punkt; Tippen auf „24h“ wechselt zu 7T / 30T / 1J; Finger halten und ziehen zeigt Preis und Zeit |
+| 3 | Chart | Kursverlauf als Punktmatrix (oder als Pixel-Mosaik wie auf der Preiskarte), Hoch/Tief, letzter Wert in Pink; Tippen auf „24h“ wechselt zu 7T / 30T / 1J; Finger halten und ziehen zeigt Preis und Zeit |
 | 4 | Block | Blockhöhe, Alter und Pool des letzten Blocks, Blöcke bis zum Halving |
 | 5 | Blockzeit & Gebühren | Blockhöhe, Sats pro USD, Gebühren niedrig/mittel/hoch in sat/vB und $ |
 | 6 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
@@ -66,7 +66,8 @@ oben rechts in jeder Kachel lässt sich die Karte ein- oder ausschalten; ausgesc
 weder beim Blättern noch beim automatischen Seitenwechsel. Eine Karte bleibt immer an. Zahnrad bzw.
 „Einstellungen“ führen zur Konfiguration.
 
-Im Browser lässt sich außerdem die **Chart-Fläche** wählen: Punkte (Standard) oder ohne Verlauf (nur die Linie).
+Im Browser lässt sich außerdem die **Chart-Fläche** wählen: Punkte (Standard), ohne Verlauf (nur die Linie)
+oder Pixel (Säulen aus Pixel-Zellen wie das Mosaik der Preiskarte).
 Unter **Karten** stehen dort dieselben Ein/Aus-Schalter wie im Kartenmenü.
 
 ## Einrichtung (einmalig)

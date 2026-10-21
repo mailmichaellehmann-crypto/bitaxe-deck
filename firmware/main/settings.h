@@ -24,7 +24,7 @@ typedef struct {
     bool block_note;     // Hinweis bei neuem Block
     uint8_t chart_range; // 0 = 24h, 1 = 7T, 2 = 30T, 3 = 1J
     uint8_t brightness;  // 5..100 %
-    uint8_t chart_style; // Chart-Fläche: 0 = Punkte, 1 = ohne Verlauf
+    uint8_t chart_style; // Chart-Fläche: 0 = Punkte, 1 = ohne Verlauf, 2 = Pixel (Mosaik)
     bool auto_update;    // OTA-Updates automatisch installieren
     uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 8 = Lotterie)
 } deck_settings_t;

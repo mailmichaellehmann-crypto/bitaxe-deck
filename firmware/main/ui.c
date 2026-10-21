@@ -289,19 +289,27 @@ static struct { lv_obj_t *title, *status, *dot, *hash, *unit, *legend, *cells[55
 
 // ---- 0 Preis: großer Kurs, darunter der Kursverlauf als Pixel-Mosaik
 #define MOS_CELL 8
-static void mosaic_draw(const float *v, int n, double mn, double mx)
+
+// Höhe einer Mosaik-Säule in Zellen (mindestens 1)
+static int mos_cells(double val, double mn, double mx, int rows)
 {
-    canvas_t *c = &A.mos;
-    lv_canvas_fill_bg(c->cv, C_BG, LV_OPA_COVER);
-    int cols = c->w / MOS_CELL, rows = c->h / MOS_CELL;
     double range = mx - mn > 1e-9 ? mx - mn : 1;
+    int hc = 1 + (int)((val - mn) / range * (rows - 1) + 0.5);
+    return hc < 1 ? 1 : hc > rows ? rows : hc;
+}
+
+// Kursverlauf als Säulen aus Pixel-Zellen; y0 = Abstand oben, damit die Säulen unten bündig stehen
+static void mosaic_fill(canvas_t *c, int y0, int rows, const float *v, int n, double mn, double mx, int seed)
+{
+    lv_canvas_fill_bg(c->cv, C_BG, LV_OPA_COVER);
+    int cols = c->w / MOS_CELL;
     for (int col = 0; col < cols; col++) {
         float val = sample(v, n, (float)col / (cols - 1));
-        int hcells = 1 + (int)((val - mn) / range * (rows - 1) + 0.5);
+        int hcells = mos_cells(val, mn, mx, rows);
         for (int r = 0; r < rows; r++) {
             int from_bottom = rows - 1 - r;
-            int x = col * MOS_CELL, y = r * MOS_CELL;
-            uint32_t h = hash2(col, r);
+            int x = col * MOS_CELL, y = y0 + r * MOS_CELL;
+            uint32_t h = hash2(col, r + seed);
             lv_color_t cl;
             if (from_bottom < hcells - 1) {
                 int g = 0x1C + (int)(0x2A * (float)from_bottom / rows) + (int)(h % 0x14); // Säule
@@ -315,6 +323,11 @@ static void mosaic_draw(const float *v, int n, double mn, double mx)
         }
     }
     lv_obj_invalidate(c->cv);
+}
+
+static void mosaic_draw(const float *v, int n, double mn, double mx)
+{
+    mosaic_fill(&A.mos, 0, A.mos.h / MOS_CELL, v, n, mn, mx, 0);
 }
 
 static void build_price(lv_obj_t *t)
@@ -356,7 +369,7 @@ static struct {
     int n;
     double mn, mx;
     int64_t t0, t1;
-    lv_obj_t *tag, *tag_lbl, *hi, *lo, *xline, *xdot, *tip, *tip_p, *tip_t, *hit;
+    lv_obj_t *hi, *lo, *xline, *xdot, *tip, *tip_p, *tip_t, *hit;
     bool scrub;
 } K;
 
@@ -512,11 +525,25 @@ static void card_event_cb(lv_event_t *e)
     }
 }
 
-static int val_y(double v) { return (int)((1.0 - (v - K.mn) / (K.mx - K.mn)) * (CH_H - 1) + 0.5); }
+// Chart-Stil „Pixel“: dasselbe Mosaik wie auf der Preiskarte, 55 × 23 Zellen
+#define PIX_ROWS (CH_H / MOS_CELL)
+#define PIX_Y0 (CH_H - PIX_ROWS * MOS_CELL)
+static bool chart_pixel(void) { return g_settings.chart_style == 2; }
+
+// y im Chart zu einem Kurs; im Pixel-Stil die Mitte der obersten Zelle der Säule
+static int val_y(double v)
+{
+    if (chart_pixel()) return PIX_Y0 + (PIX_ROWS - mos_cells(v, K.mn, K.mx, PIX_ROWS)) * MOS_CELL + (MOS_CELL - 1) / 2;
+    return (int)((1.0 - (v - K.mn) / (K.mx - K.mn)) * (CH_H - 1) + 0.5);
+}
 
 static void chart_draw(void)
 {
     canvas_t *c = &CC;
+    if (chart_pixel()) {
+        mosaic_fill(c, PIX_Y0, PIX_ROWS, K.v, K.n, K.mn, K.mx, 97);
+        return;
+    }
     lv_canvas_fill_bg(c->cv, C_BG, LV_OPA_COVER);
     int cols = c->w / DOT, rows = c->h / DOT;
     int prev_r = -1;
@@ -559,10 +586,25 @@ static void scrub_update(void)
     int x = p.x - CH_X;
     if (x < 0) x = 0;
     if (x > CH_W - 1) x = CH_W - 1;
-    int idx = (x * (K.n - 1) + (CH_W - 1) / 2) / (CH_W - 1);
-    int px = idx * (CH_W - 1) / (K.n - 1), py = val_y(K.v[idx]);
+    int idx, px, py, ds;
+    if (chart_pixel()) { // auf die Säule einrasten, oberste Zelle leuchtet pink
+        int cols = CH_W / MOS_CELL, col = x / MOS_CELL;
+        if (col > cols - 1) col = cols - 1;
+        float t = (float)col / (cols - 1);
+        idx = (int)(t * (K.n - 1) + 0.5f);
+        px = col * MOS_CELL + (MOS_CELL - 1) / 2;
+        py = val_y(sample(K.v, K.n, t));
+        ds = MOS_CELL - 1;
+    } else {
+        idx = (x * (K.n - 1) + (CH_W - 1) / 2) / (CH_W - 1);
+        px = idx * (CH_W - 1) / (K.n - 1);
+        py = val_y(K.v[idx]);
+        ds = 10;
+    }
+    lv_obj_set_size(K.xdot, ds, ds);
+    lv_obj_set_style_radius(K.xdot, chart_pixel() ? 0 : LV_RADIUS_CIRCLE, 0);
     lv_obj_set_pos(K.xline, CH_X + px, CH_Y);
-    lv_obj_set_pos(K.xdot, CH_X + px - 5, CH_Y + py - 5);
+    lv_obj_set_pos(K.xdot, CH_X + px - ds / 2, CH_Y + py - ds / 2);
     char b[40], n[24];
     fmt_de(n, sizeof(n), K.v[idx], 0);
     snprintf(b, sizeof(b), "%s %s", n, cur_sym());
@@ -644,10 +686,6 @@ static void build_chart(lv_obj_t *t)
     C.msg = txt(t, W, &font_m14, C_TEXT2, "LÄDT …", 'c', W / 2, CH_Y + CH_H / 2);
     K.hi = cap(t, W, "", 'l', 0, 0);
     K.lo = cap(t, W, "", 'l', 0, 0);
-    K.tag = rect(t, 0, 0, 90, 22, C_PINK);
-    lv_obj_set_style_radius(K.tag, LV_RADIUS_CIRCLE, 0);
-    K.tag_lbl = txt(K.tag, 90, &font_m14, C_BG, "", 'c', 45, 16);
-    lv_obj_add_flag(K.tag, LV_OBJ_FLAG_HIDDEN);
     // Fadenkreuz: Finger kurz halten, dann ziehen
     K.hit = rect(t, CH_X, CH_Y, CH_W, CH_H, C_BG);
     lv_obj_set_style_bg_opa(K.hit, LV_OPA_TRANSP, 0);
@@ -1008,22 +1046,19 @@ static void update_chart(deck_data_t *d)
         fmt_de(n, sizeof(n), K.v[idx[k]], 0);
         snprintf(b, sizeof(b), "%s %s", k == 0 ? "H" : "T", n);
         lv_label_set_text(lbl[k], b);
+        lv_obj_set_style_bg_color(lbl[k], C_BG, 0); // im Pixel-Stil schwarz hinterlegt, sonst unlesbar
+        lv_obj_set_style_bg_opa(lbl[k], chart_pixel() ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_pad_hor(lbl[k], chart_pixel() ? 4 : 0, 0);
         lv_obj_update_layout(lbl[k]);
         int lw = lv_obj_get_width(lbl[k]);
         int lx = px - lw / 2;
         if (lx < CH_X) lx = CH_X;
-        if (lx + lw > CH_X + CH_W - 100) lx = CH_X + CH_W - 100 - lw;
-        int ly = k == 0 ? py - 22 : py + 10;
+        if (lx + lw > CH_X + CH_W) lx = CH_X + CH_W - lw;
+        int ly = k == 0 || chart_pixel() ? py - 22 : py + 10; // Pixel: Tief über seiner Säule
         if (ly < CH_Y - 8) ly = CH_Y - 8;
         if (ly > CH_Y + CH_H - 14) ly = CH_Y + CH_H - 14;
         lv_obj_align(lbl[k], LV_ALIGN_TOP_LEFT, lx, ly);
     }
-    // Preis-Pille am letzten Wert
-    fmt_de(n, sizeof(n), d->chart_last, 0);
-    lv_label_set_text(K.tag_lbl, n);
-    int ly = CH_Y + val_y(K.v[K.n - 1]);
-    lv_obj_set_pos(K.tag, CH_X + CH_W - 90 - 14, ly < CH_Y + 30 ? ly + 10 : ly - 32);
-    lv_obj_clear_flag(K.tag, LV_OBJ_FLAG_HIDDEN);
     // Zeitachse
     for (int i = 0; i < 5; i++) {
         time_t ts = (time_t)((d->chart_t0 + (d->chart_t1 - d->chart_t0) * i / 4) / 1000);
