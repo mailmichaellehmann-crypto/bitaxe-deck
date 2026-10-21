@@ -21,14 +21,13 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 3 | Chart | Kursverlauf als Punktmatrix (oder als Pixel-Mosaik wie auf der Preiskarte), Hoch/Tief, letzter Wert in Pink; Tippen auf „24h“ wechselt zu 7T / 30T / 1J; Finger halten und ziehen zeigt Preis und Zeit |
 | 4 | Block | Blockhöhe, Alter und Pool des letzten Blocks, Blöcke bis zum Halving |
 | 5 | Neuer Block | Kette der letzten fünf Blöcke als Pixel-Blöcke (der neueste pink), Blockhöhe groß, Pool, Transaktionen, Belohnung, Uhrzeit und Alter; bei einem neuen Block läuft die Animation |
-| 6 | Halving | Pixel-Sanduhr: oben die Blöcke bis zum nächsten Halving, unten die schon geschürften der Epoche; Restblöcke, geschätztes Datum, Belohnung vorher/nachher |
+| 6 | Halving | Vollbild aus Pixel-Sand: unten die schon geschürften Blöcke der Epoche, darüber die restlichen; Blöcke bis zum Halving groß, Zielblock, geschätztes Datum, Belohnung vorher/nachher |
 | 7 | Blockzeit & Gebühren | Blockhöhe, Sats pro USD, Gebühren niedrig/mittel/hoch in sat/vB und $ |
 | 8 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
 | 9 | Uhr | Uhrzeit, Wochentag, Datum |
 | 10 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
-| 11 | Netzanteil | dein Bitaxe als pinke Kachel, jede Stufe zoomt ×100 heraus bis zum ganzen Netzwerk; Anzahl Bitaxe, Hashrate, am Ende deine Chance je Block |
-| 12 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
-| 13 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
+| 11 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
+| 12 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
 
 Gestaltung im Stil von Strike (eigener Code): tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen,
 Geist Mono für Beschriftungen, feine Rahmen, Punktmatrix-Chart, Pixel-Mosaik als Kursverlauf.
@@ -67,22 +66,15 @@ Kommt ein Block, fällt ein pinker Pixel-Block auf den freien Platz, die Verbind
 die Blockhöhe rollt wie ein Zählwerk auf den neuen Wert, danach rückt die Kette einen Platz weiter.
 Ist in den Einstellungen „Neuer Block“ eingeschaltet, springt das Display dafür zu dieser Karte.
 
-## Halving-Sanduhr
+## Halving
 
-Die Sanduhr steht für die laufende Halving-Epoche (210.000 Blöcke). Der Sand oben sind die Blöcke
-bis zum nächsten Halving, unten liegen die schon geschürften; die pinke Spitze des Haufens ist das
-Neueste. Ein feiner Strom rieselt durch den Hals, bei jedem neuen Block fällt ein pinkes Korn.
-Rechts: Blöcke bis zum Halving, geschätztes Datum (aus der mittleren Blockzeit von mempool.space)
-und die Blockbelohnung vorher → nachher.
-
-## Netzanteil
-
-Wie im Film „Powers of Ten“: Zuerst füllt dein Bitaxe als pinke Kachel das Bild. Dann zoomt die
-Ansicht heraus, deine Kachel schrumpft zur ersten von 10 × 10 – jede Stufe zeigt 100-mal so viele
-Bitaxe wie die vorige, die vorige Ansicht steckt jeweils in deiner (pink umrandeten) Kachel. Auf
-der letzten Stufe füllt das ganze Bitcoin-Netzwerk nur noch einige Kacheln; rechts stehen dann die
-Anzahl Bitaxe, die das Netzwerk ausmachen, und deine Chance je Block. Die Stufen laufen von selbst,
-solange die Karte zu sehen ist; ein Tippen in die Mitte springt weiter.
+Die ganze Karte ist ein Feld aus Pixel-Sand und steht für die laufende Halving-Epoche (210.000
+Blöcke, eine Zelle ≈ 88 Blöcke). Unten liegen die schon geschürften Blöcke als Sand mit flachen
+Dünen, der freie Raum darüber sind die restlichen bis zum Halving. Körner rieseln ständig herab;
+bei jedem neuen Block fällt ein pinkes Korn und bleibt als neuestes oben liegen. Groß stehen die
+Blöcke bis zum Halving, darunter Zielblock, geschätztes Datum (aus der mittleren Blockzeit von
+mempool.space) und die Tage bis dahin, oben rechts die Blockbelohnung vorher → nachher. Hinter
+den Beschriftungen bleiben die Zellen ausgespart, damit alles auch über dem Sand lesbar ist.
 
 ## Share-Lotterie
 

@@ -17,15 +17,20 @@ deck_settings_t g_settings = {
     .card_mask = DECK_CARDS_ALL,
 };
 
-const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",    "USD / EUR", "Chart",      "Block",      "Neuer Block",
-                                                 "Halving",  "Gebühren",  "Difficulty", "Uhr",        "Bitaxe",
-                                                 "Netzanteil", "Kosten",  "Lotterie"};
+const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",    "USD / EUR", "Chart",      "Block", "Neuer Block", "Halving",
+                                                 "Gebühren", "Difficulty", "Uhr",       "Bitaxe", "Kosten",     "Lotterie"};
 
 // neue Karte an Platz pos einfügen (eingeschaltet), die folgenden rücken auf
 static uint16_t card_insert(uint16_t r, int pos)
 {
     uint16_t low = r & ((1u << pos) - 1);
     return low | (uint16_t)((r >> pos) << (pos + 1)) | (1u << pos);
+}
+
+// Karte an Platz pos entfernen, die folgenden rücken nach
+static uint16_t card_remove(uint16_t r, int pos)
+{
+    return (r & ((1u << pos) - 1)) | (uint16_t)((r >> (pos + 1)) << pos);
 }
 
 static const char *MINER_KEYS[DECK_MAX_MINERS] = {"bitaxe"};
@@ -80,10 +85,8 @@ void settings_load(void)
         // ältere Firmware: neue Karten eingeschaltet einfügen
         if (n < 10) r = card_insert(r, 8);  // Kosten
         if (n < 11) r = card_insert(r, 4);  // Neuer Block
-        if (n < 13) {
-            r = card_insert(r, 5);          // Halving
-            r = card_insert(r, 10);         // Netzanteil
-        }
+        if (n < 12) r = card_insert(r, 5);  // Halving
+        if (n == 13) r = card_remove(r, 10); // Netzanteil (nur in einer Zwischenversion)
         g_settings.card_mask = r & DECK_CARDS_ALL;
     }
     if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;
