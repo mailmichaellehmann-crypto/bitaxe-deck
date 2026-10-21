@@ -17,8 +17,16 @@ deck_settings_t g_settings = {
     .card_mask = DECK_CARDS_ALL,
 };
 
-const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",      "USD / EUR", "Chart",  "Block",  "Neuer Block", "Gebühren",
-                                                 "Difficulty", "Uhr",       "Bitaxe", "Kosten", "Lotterie"};
+const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",    "USD / EUR", "Chart",      "Block",      "Neuer Block",
+                                                 "Halving",  "Gebühren",  "Difficulty", "Uhr",        "Bitaxe",
+                                                 "Netzanteil", "Kosten",  "Lotterie"};
+
+// neue Karte an Platz pos einfügen (eingeschaltet), die folgenden rücken auf
+static uint16_t card_insert(uint16_t r, int pos)
+{
+    uint16_t low = r & ((1u << pos) - 1);
+    return low | (uint16_t)((r >> pos) << (pos + 1)) | (1u << pos);
+}
 
 static const char *MINER_KEYS[DECK_MAX_MINERS] = {"bitaxe"};
 
@@ -69,9 +77,13 @@ void settings_load(void)
     if (nvs_get_u16(h, "cards", &r) == ESP_OK) {
         uint8_t n = 9;
         get_u8(h, "cardsn", &n);
-        // ältere Firmware: neue Karten eingeschaltet einfügen, die folgenden rücken auf
-        if (n < 10) r = (r & 0xFF) | (((r >> 8) & 1) << 9) | (1u << 8);        // „Kosten“ an Platz 8
-        if (n < 11) r = (r & 0x0F) | ((uint16_t)(r & ~0x0Fu) << 1) | (1u << 4); // „Neuer Block“ an Platz 4
+        // ältere Firmware: neue Karten eingeschaltet einfügen
+        if (n < 10) r = card_insert(r, 8);  // Kosten
+        if (n < 11) r = card_insert(r, 4);  // Neuer Block
+        if (n < 13) {
+            r = card_insert(r, 5);          // Halving
+            r = card_insert(r, 10);         // Netzanteil
+        }
         g_settings.card_mask = r & DECK_CARDS_ALL;
     }
     if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;

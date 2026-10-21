@@ -54,6 +54,7 @@ LV_FONT_DECLARE(font_m20);
 #define H LCD_V_RES
 #define N_TILES DECK_CARDS
 #define CARD_NEWBLOCK 4 // Karte „Neuer Block“
+#define CARD_NETZ 10    // Karte „Netzanteil“
 #define MX 20 // Seitenrand
 
 // ------------------------------------------------------------------ Formatierung (deutsch)
@@ -386,6 +387,7 @@ static bool s_animating;
 static bool s_booting = true; // Boot-Screen sichtbar: kein automatischer Seitenwechsel
 static struct { bool down, drag, long_pr; lv_point_t p0; int64_t t0; int dx; } SW;
 static void open_cfg(void);
+static void nz_next(void);
 
 static bool card_on(int i) { return (g_settings.card_mask >> i) & 1; }
 
@@ -522,6 +524,7 @@ static void card_event_cb(lv_event_t *e)
         } else if (!SW.long_pr && !K.scrub && code == LV_EVENT_RELEASED) {
             if (p.x < W / 4) car_go(-1);
             else if (p.x > W * 3 / 4) car_go(1);
+            else if (s_cur == CARD_NETZ) nz_next();
         }
     }
 }
@@ -798,7 +801,7 @@ static void build_miner(lv_obj_t *t)
     }
 }
 
-// ---- 8 Mining-Kosten: aktueller Verbrauch, hochgerechnete Kosten, gezählte kWh
+// ---- 11 Mining-Kosten: aktueller Verbrauch, hochgerechnete Kosten, gezählte kWh
 static struct {
     lv_obj_t *status, *dot, *watt, *unit, *price, *ticket, *cost[3], *kwh[3], *e_title[2], *e_val[2], *e_cost[2];
     double power, btc;       // Leistung (W), Kurs in Euro (Strom wird in Euro bezahlt)
@@ -891,7 +894,391 @@ static void build_cost(lv_obj_t *t)
     cost_render();
 }
 
-// ---- 9 Share-Lotterie: jeder gefundene Hash fällt als Punkt in ein Histogramm (log. Skala).
+// ---- 5 Halving: Pixel-Sanduhr. Oben liegen die Blöcke bis zum nächsten Halving, unten die schon
+// geschürften der Epoche; ein feiner Strom rieselt durch den Hals, bei jedem neuen Block fällt ein
+// pinkes Korn.
+#define HG_CELL 6
+#define HG_COLS 33
+#define HG_HALF 21                      // Reihen je Kolben
+#define HG_ROWS (2 * HG_HALF + 2)       // dazu oben und unten eine Platte
+#define HG_X MX
+#define HG_Y 46
+#define HG_MID (HG_COLS / 2)
+static canvas_t HGC;
+static struct {
+    lv_obj_t *head, *left, *left_sub, *date, *days, *reward, *grain[3], *drop;
+    uint32_t h;
+    int y_neck, y_pile;                 // Strom: vom Hals bis zur Oberfläche unten (Pixel)
+} HG;
+
+// halbe Breite (Zellen) der Reihe r im oberen Kolben: 0 = oben … HG_HALF-1 = Hals
+static int hg_halfw(int r)
+{
+    float t = r / (float)(HG_HALF - 1), e = (t - 0.4f) / 0.6f, v = 1 - e * e;
+    return (int)(15 * sqrtf(v > 0 ? v : 0) + 0.5f);
+}
+
+static void hg_y(void *o, int32_t v) { lv_obj_set_y(o, v); }
+
+static void hg_grains(int y0, int y1, bool on)
+{
+    for (int i = 0; i < 3; i++) {
+        lv_anim_del(HG.grain[i], NULL);
+        if (!on || y1 <= y0) { lv_obj_add_flag(HG.grain[i], LV_OBJ_FLAG_HIDDEN); continue; }
+        lv_obj_clear_flag(HG.grain[i], LV_OBJ_FLAG_HIDDEN);
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, HG.grain[i]);
+        lv_anim_set_exec_cb(&a, hg_y);
+        lv_anim_set_values(&a, y0, y1);
+        lv_anim_set_time(&a, 900);
+        lv_anim_set_delay(&a, i * 300);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in); // fällt schneller werdend
+        lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_start(&a);
+    }
+}
+
+// neuer Block: ein pinkes Korn fällt
+static void hg_drop(void)
+{
+    if (HG.y_pile <= HG.y_neck) return;
+    lv_obj_clear_flag(HG.drop, LV_OBJ_FLAG_HIDDEN);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, HG.drop);
+    lv_anim_set_exec_cb(&a, hg_y);
+    lv_anim_set_values(&a, HG.y_neck, HG.y_pile);
+    lv_anim_set_time(&a, 1100);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_start(&a);
+}
+
+static void hg_draw(uint32_t height)
+{
+    canvas_t *c = &HGC;
+    lv_canvas_fill_bg(c->cv, C_BG, LV_OPA_COVER);
+    int cap = 0;
+    for (int r = 0; r < HG_HALF; r++) cap += 2 * hg_halfw(r) + 1;
+    uint32_t left = 210000 - height % 210000;
+    int top = (int)((double)cap * left / 210000 + 0.5), bot = cap - top;
+    // Platten
+    for (int q = 0; q < HG_COLS; q++) {
+        fill_box(c, q * HG_CELL, 0, HG_CELL - 1, HG_CELL - 1, gray(0x3A));
+        fill_box(c, q * HG_CELL, (HG_ROWS - 1) * HG_CELL, HG_CELL - 1, HG_CELL - 1, gray(0x3A));
+    }
+    // oberer Kolben: Sand liegt unten am Hals, Oberfläche mit Mulde in der Mitte
+    int sand = top;
+    for (int r = HG_HALF - 1; r >= 0; r--) {
+        int hw = hg_halfw(r), w = 2 * hw + 1, row = 1 + r, k = sand >= w ? w : sand;
+        sand -= k;
+        for (int q = -hw; q <= hw; q++) {
+            int pos = q + hw; // 0 … w-1
+            bool filled = k == w || pos < k / 2 || pos >= w - (k - k / 2);
+            uint32_t hh = hash2(q + 40, row);
+            lv_color_t cl = filled ? gray(0x7A + (int)(hh % 0x24)) : (q == -hw || q == hw) ? gray(0x26) : gray(0x0E);
+            fill_box(c, (HG_MID + q) * HG_CELL, row * HG_CELL, HG_CELL - 1, HG_CELL - 1, cl);
+        }
+    }
+    // unterer Kolben: Haufen von unten, Spitze in der Mitte, das neueste Korn pink
+    sand = bot;
+    int pile_row = HG_ROWS - 1;
+    for (int rb = HG_HALF - 1; rb >= 0; rb--) {
+        int hw = hg_halfw(HG_HALF - 1 - rb), w = 2 * hw + 1, row = 1 + HG_HALF + rb, k = sand >= w ? w : sand;
+        sand -= k;
+        if (k > 0) pile_row = row;
+        for (int q = -hw; q <= hw; q++) {
+            int pos = q + hw;
+            bool filled = k == w || (pos >= (w - k) / 2 && pos < (w - k) / 2 + k);
+            uint32_t hh = hash2(q + 90, row);
+            lv_color_t cl = filled ? gray(0x58 + (int)(hh % 0x22)) : (q == -hw || q == hw) ? gray(0x26) : gray(0x0E);
+            if (filled && k < w && q == 0) cl = C_PINK; // Spitze des Haufens
+            fill_box(c, (HG_MID + q) * HG_CELL, row * HG_CELL, HG_CELL - 1, HG_CELL - 1, cl);
+        }
+    }
+    lv_obj_invalidate(c->cv);
+    // Strom durch den Hals bis zur Oberfläche
+    HG.y_neck = HG_Y + (1 + HG_HALF) * HG_CELL;
+    HG.y_pile = HG_Y + (pile_row - 1) * HG_CELL;
+    hg_grains(HG.y_neck, HG.y_pile, top > 0);
+}
+
+static void build_halving(lv_obj_t *t)
+{
+    cap(t, W, "HALVING-SANDUHR", 'l', MX, 30);
+    HG.head = txt(t, W, &font_m14, C_TEXT2, "", 'r', W - MX, 30);
+    canvas_create(&HGC, t, HG_X, HG_Y, HG_COLS * HG_CELL, HG_ROWS * HG_CELL);
+    for (int i = 0; i < 3; i++) {
+        HG.grain[i] = rect(t, HG_X + HG_MID * HG_CELL + 1, HG_Y, 3, 3, gray(0xB0));
+        lv_obj_add_flag(HG.grain[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    HG.drop = rect(t, HG_X + HG_MID * HG_CELL, HG_Y, HG_CELL - 1, HG_CELL - 1, C_PINK);
+    lv_obj_add_flag(HG.drop, LV_OBJ_FLAG_HIDDEN);
+    int x = 246;
+    cap(t, W, "BLÖCKE BIS ZUM HALVING", 'l', x, 84);
+    HG.left = tight(txt(t, W, &font_g50, C_TEXT, "–", 'l', x - 2, 134), 2);
+    HG.left_sub = txt(t, W, &font_m14, C_TEXT2, "", 'l', x, 158);
+    cap(t, W, "GESCHÄTZT", 'l', x, 196);
+    HG.date = tight(txt(t, W, &font_g26, C_TEXT, "–", 'l', x - 1, 226), 1);
+    HG.days = txt(t, W, &font_m14, C_TEXT2, "", 'l', x, 248);
+    cap(t, W, "BLOCKBELOHNUNG", 'l', x, 280);
+    HG.reward = txt(t, W, &font_m14, C_TEXT, "", 'l', x, 302);
+}
+
+static void update_halving(deck_data_t *d)
+{
+    if (!d->net_ok || !d->height || d->height == HG.h) return;
+    HG.h = d->height;
+    uint32_t h = d->height, next = (h / 210000 + 1) * 210000, left = next - h;
+    char b[64], n[24], n2[24];
+    snprintf(b, sizeof(b), "Halving #%u · %.1f %%", (unsigned)(next / 210000), 100.0 * (h % 210000) / 210000);
+    for (char *q = b; *q; q++) if (*q == '.') *q = ',';
+    lv_label_set_text(HG.head, b);
+    fmt_de(n, sizeof(n), left, 0);
+    lv_label_set_text(HG.left, n);
+    fmt_de(n, sizeof(n), next, 0);
+    snprintf(b, sizeof(b), "bis Block %s", n);
+    lv_label_set_text(HG.left_sub, b);
+    double bt = d->block_time_ms > 60000 ? d->block_time_ms / 1000.0 : 600; // Sekunden je Block
+    double secs = left * bt;
+    if (net_time_valid()) {
+        static const char *mon[12] = {"Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"};
+        time_t t = time(NULL) + (time_t)secs;
+        struct tm tm;
+        localtime_r(&t, &tm);
+        snprintf(b, sizeof(b), "%s %d", mon[tm.tm_mon], tm.tm_year + 1900);
+        lv_label_set_text(HG.date, b);
+    }
+    fmt_de(n, sizeof(n), secs / 86400, 0);
+    snprintf(b, sizeof(b), "in ca. %s Tagen", n);
+    lv_label_set_text(HG.days, b);
+    double sub = 50.0 / pow(2, h / 210000);
+    fmt_de(n, sizeof(n), sub, 4);
+    fmt_de(n2, sizeof(n2), sub / 2, 4);
+    snprintf(b, sizeof(b), "%s → %s BTC", n, n2);
+    lv_label_set_text(HG.reward, b);
+    hg_draw(h);
+}
+
+// ---- 10 Netzanteil: dein Bitaxe ist die pinke Kachel. Jede Stufe zoomt ×100 heraus – die vorige
+// Ansicht schrumpft in die erste Kachel – bis das ganze Bitcoin-Netzwerk zu sehen ist.
+#define NZ_N 10                          // 10 × 10 Kacheln
+#define NZ_P 22                          // Raster einer Kachel (Pixel)
+#define NZ_SZ (NZ_N * NZ_P)
+#define NZ_MAXST 8
+static canvas_t NZC;
+static struct {
+    lv_obj_t *dots[NZ_MAXST + 1], *step, *count, *count_sub, *hash, *cap3, *per;
+    double ratio, my_gh, net_gh;          // Netzwerk / dein Bitaxe
+    int final, stage, hold;              // letzte Stufe, aktuelle Stufe (0 = nur du), Ticks bis weiter
+    float sc;                            // Zoom-Maßstab 10 … 1
+    bool shown, have;
+} NZ;
+
+static lv_color_t nz_gray(int lvl, int idx) { return gray(0x2E + (int)(hash2(lvl * 131 + idx, 7) % 0x30)); }
+
+// Raster der Stufe lvl (10 × 10 Kacheln) in ein Feld p × p; net >= 0: nur so viele Kacheln sind Netzwerk
+static void nz_grid(canvas_t *c, int lvl, float x0, float y0, float p, double net)
+{
+    float cp = p / NZ_N, cs = cp * (NZ_P - 2) / NZ_P;
+    int w = cs < 1 ? 1 : (int)cs;
+    for (int j = 0; j < NZ_N; j++)
+        for (int i = 0; i < NZ_N; i++) {
+            int x = (int)(x0 + i * cp), y = (int)(y0 + j * cp), idx = j * NZ_N + i;
+            if (x >= c->w || y >= c->h || x + w < 0 || y + w < 0) continue;
+            if (idx == 0) { // deine Kachel – enthält die vorige Stufe
+                if (lvl == 1 || cp < 4) fill_box(c, x, y, w, w, C_PINK);
+                else {
+                    nz_grid(c, lvl - 1, x, y, cp, -1);
+                    if (w >= 6 && w <= 60) { // pinker Rahmen
+                        fill_box(c, x - 1, y - 1, w + 2, 1, C_PINK);
+                        fill_box(c, x - 1, y + w, w + 2, 1, C_PINK);
+                        fill_box(c, x - 1, y, 1, w, C_PINK);
+                        fill_box(c, x + w, y, 1, w, C_PINK);
+                    }
+                }
+            } else if (net >= 0 && idx >= net) { // jenseits des Netzwerks: leer, angefangene Kachel teilweise
+                fill_box(c, x, y, w, w, gray(0x0E));
+                if (idx < net + 1) {
+                    int f = (int)(w * (net - idx) + 0.5);
+                    fill_box(c, x, y + w - f, w, f, nz_gray(lvl, idx));
+                }
+            } else fill_box(c, x, y, w, w, nz_gray(lvl, idx));
+        }
+}
+
+static void nz_draw(void)
+{
+    canvas_t *c = &NZC;
+    lv_canvas_fill_bg(c->cv, C_BG, LV_OPA_COVER);
+    int L = NZ.stage < 1 ? 1 : NZ.stage;
+    double net = L == NZ.final ? NZ.ratio / pow(100, NZ.final - 1) : -1;
+    nz_grid(c, L, 0, 0, NZ_SZ * NZ.sc, net);
+    lv_obj_invalidate(c->cv);
+}
+
+static void fmt_count(char *out, size_t len, double v)
+{
+    static const char *u[4] = {"", " Mio.", " Mrd.", " Bio."};
+    int i = 0;
+    if (v >= 1e6) {
+        v /= 1e6;
+        i = 1;
+        while (v >= 1000 && i < 3) { v /= 1000; i++; }
+    }
+    char n[24];
+    fmt_de(n, sizeof(n), v, i && v < 10 && fabs(v - round(v)) >= 0.05 ? 1 : 0);
+    snprintf(out, len, "%s%s", n, u[i]);
+}
+
+static void fmt_hash(char *out, size_t len, double gh)
+{
+    static const char *u[5] = {"GH/s", "TH/s", "PH/s", "EH/s", "ZH/s"};
+    int i = 0;
+    while (gh >= 1000 && i < 4) { gh /= 1000; i++; }
+    char n[24];
+    fmt_de(n, sizeof(n), gh, gh < 10 ? 2 : gh < 100 ? 1 : 0);
+    snprintf(out, len, "%s %s", n, u[i]);
+}
+
+static void nz_labels(void)
+{
+    char b[48], n[24];
+    int st = NZ.stage, F = NZ.final;
+    for (int i = 0; i <= NZ_MAXST; i++) {
+        if (i > F) { lv_obj_add_flag(NZ.dots[i], LV_OBJ_FLAG_HIDDEN); continue; }
+        lv_obj_clear_flag(NZ.dots[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_x(NZ.dots[i], W - MX - (F - i) * 10 - 6);
+        lv_obj_set_style_bg_color(NZ.dots[i], i == st ? C_PINK : i < st ? C_TEXT3 : C_LINE2, 0);
+    }
+    if (st == 0) {
+        lv_label_set_text(NZ.step, "DAS BIST DU");
+        lv_label_set_text(NZ.count, "1");
+        lv_label_set_text(NZ.count_sub, "Bitaxe");
+        fmt_hash(b, sizeof(b), NZ.my_gh);
+        lv_label_set_text(NZ.hash, b);
+        lv_label_set_text(NZ.cap3, "MITTE TIPPEN");
+        lv_label_set_text(NZ.per, "zoomt heraus");
+        lv_obj_set_style_text_color(NZ.per, C_TEXT2, 0);
+    } else if (st < F) {
+        snprintf(b, sizeof(b), "STUFE %d VON %d · ×100", st, F);
+        lv_label_set_text(NZ.step, b);
+        fmt_count(n, sizeof(n), pow(100, st));
+        lv_label_set_text(NZ.count, n);
+        lv_label_set_text(NZ.count_sub, "Bitaxe wie deiner");
+        fmt_hash(b, sizeof(b), NZ.my_gh * pow(100, st));
+        lv_label_set_text(NZ.hash, b);
+        lv_label_set_text(NZ.cap3, "1 KACHEL");
+        fmt_count(n, sizeof(n), pow(100, st - 1));
+        snprintf(b, sizeof(b), "= %s Bitaxe", n);
+        lv_label_set_text(NZ.per, b);
+        lv_obj_set_style_text_color(NZ.per, C_TEXT, 0);
+    } else {
+        lv_label_set_text(NZ.step, "DAS GANZE NETZWERK");
+        fmt_count(n, sizeof(n), NZ.ratio);
+        lv_label_set_text(NZ.count, n);
+        lv_label_set_text(NZ.count_sub, "Bitaxe wie deiner");
+        fmt_hash(b, sizeof(b), NZ.net_gh);
+        lv_label_set_text(NZ.hash, b);
+        lv_label_set_text(NZ.cap3, "DEINE CHANCE JE BLOCK");
+        snprintf(b, sizeof(b), "1 : %s", n);
+        lv_label_set_text(NZ.per, b);
+        lv_obj_set_style_text_color(NZ.per, C_PINK, 0);
+    }
+}
+
+static void nz_zoom_exec(void *o, int32_t v)
+{
+    NZ.sc = powf(10, 1 - v / 1000.0f);
+    nz_draw();
+}
+
+// eine Stufe weiter (nach der letzten wieder von vorn)
+static void nz_next(void)
+{
+    if (!NZ.have) return;
+    lv_anim_del(&NZ, nz_zoom_exec);
+    if (NZ.stage >= NZ.final) {
+        NZ.stage = 0;
+        NZ.sc = 10;
+        nz_draw();
+        NZ.hold = 6;
+    } else {
+        NZ.stage++;
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, &NZ);
+        lv_anim_set_exec_cb(&a, nz_zoom_exec);
+        lv_anim_set_values(&a, 0, 1000);
+        lv_anim_set_time(&a, 1400);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+        lv_anim_start(&a);
+        NZ.hold = NZ.stage == NZ.final ? 16 : 9;
+    }
+    nz_labels();
+}
+
+// alle 500 ms: läuft nur, solange die Karte zu sehen ist; beginnt jedes Mal bei „Das bist du“
+static void nz_tick(void)
+{
+    bool vis = s_cur == CARD_NETZ && s_nb < 0 && !s_booting;
+    if (!vis) { NZ.shown = false; return; }
+    if (!NZ.have) return;
+    if (!NZ.shown) {
+        NZ.shown = true;
+        lv_anim_del(&NZ, nz_zoom_exec);
+        NZ.stage = 0;
+        NZ.sc = 10;
+        nz_draw();
+        nz_labels();
+        NZ.hold = 6;
+        return;
+    }
+    if (--NZ.hold <= 0) nz_next();
+}
+
+static void build_netz(lv_obj_t *t)
+{
+    cap(t, W, "DEIN ANTEIL AM NETZWERK", 'l', MX, 30);
+    for (int i = 0; i <= NZ_MAXST; i++) {
+        NZ.dots[i] = rect(t, 0, 21, 6, 6, C_LINE2);
+        lv_obj_add_flag(NZ.dots[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    canvas_create(&NZC, t, MX, 56, NZ_SZ, NZ_SZ);
+    int x = 262;
+    NZ.step = cap(t, W, "", 'l', x, 72);
+    NZ.count = tight(txt(t, W, &font_g36, C_TEXT, "–", 'l', x - 1, 112), 1);
+    NZ.count_sub = txt(t, W, &font_m14, C_TEXT2, "", 'l', x, 134);
+    cap(t, W, "HASHRATE", 'l', x, 176);
+    NZ.hash = tight(txt(t, W, &font_g26, C_TEXT, "–", 'l', x - 1, 206), 1);
+    NZ.cap3 = cap(t, W, "", 'l', x, 246);
+    NZ.per = txt(t, W, &font_g20, C_TEXT, "", 'l', x, 272);
+    NZ.sc = 10;
+}
+
+static void update_netz(deck_data_t *d)
+{
+    static uint32_t vm, vn;
+    if (d->miner_n < 1 || !d->net_ok || (d->miner_ver == vm && d->net_ver == vn)) return;
+    vm = d->miner_ver;
+    vn = d->net_ver;
+    double my = d->miners[0].hashrate_gh;
+    if (my <= 0 || d->net_hash <= 0) return;
+    NZ.my_gh = my;
+    NZ.net_gh = d->net_hash / 1e9;
+    NZ.ratio = NZ.net_gh / my;
+    int F = (int)ceil(log10(NZ.ratio > 1 ? NZ.ratio : 1) / 2);
+    if (F < 1) F = 1;
+    if (F > NZ_MAXST) F = NZ_MAXST;
+    bool first = !NZ.have;
+    NZ.final = F;
+    if (NZ.stage > F) NZ.stage = F;
+    NZ.have = true;
+    if (first) nz_draw();
+    nz_labels();
+}
+
+// ---- 12 Share-Lotterie: jeder gefundene Hash fällt als Punkt in ein Histogramm (log. Skala).
 // Links häufige kleine Shares, rechts seltene große, ganz rechts in Pink: der Block.
 #define LT_X MX
 #define LT_Y 118
@@ -1183,6 +1570,7 @@ static void update_network(deck_data_t *d)
         const block_info_t *bi = &d->blocks[0];
         if (card_h && d->height > card_h) {
             block_anim_show(card_h, d->height, bi->pool, bi->tx_count, bi->reward_btc, bi->timestamp);
+            hg_drop();
             // „Neuer Block“ eingeschaltet: zur Karte springen und das Display wecken
             if (g_settings.block_note && card_on(CARD_NEWBLOCK) && !s_booting && !SW.down && !K.scrub) {
                 car_jump(CARD_NEWBLOCK, true);
@@ -1961,20 +2349,20 @@ static void build_overlays(void)
     s_menu = rect(lv_scr_act(), 0, 0, W, H, C_BG);
     lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_EVENT_BUBBLE);
     const char *const *names = DECK_CARD_NAMES;
-    // 3 Spalten × 4 Reihen
+    // 3 Spalten × 5 Reihen
     for (int i = 0; i < DECK_CARDS; i++) {
-        lv_obj_t *b = panel(s_menu, xs[i % 3], 12 + (i / 3) * 64, 144, 60);
+        lv_obj_t *b = panel(s_menu, xs[i % 3], 8 + (i / 3) * 52, 144, 48);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x111111), LV_STATE_PRESSED);
         char num[4];
         snprintf(num, sizeof(num), "%02d", i + 1);
-        txt(b, 144, &font_m12, C_TEXT3, num, 'l', 12, 22);
-        s_menu_name[i] = txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 48);
+        txt(b, 144, &font_m12, C_TEXT3, num, 'l', 12, 17);
+        s_menu_name[i] = txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 39);
         lv_obj_add_event_cb(b, menu_item_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         s_menu_tile[i] = b;
         // Schalter: Karte ein/aus
-        lv_obj_t *sw = rect(b, 144 - 12 - 34, 9, 34, 18, C_LINE);
+        lv_obj_t *sw = rect(b, 144 - 12 - 34, 7, 34, 18, C_LINE);
         lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, 0);
         lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(sw, LV_OBJ_FLAG_EVENT_BUBBLE);
@@ -1997,6 +2385,9 @@ static void auto_tick(void)
     static int64_t last_rot = 0;
     int64_t now = esp_timer_get_time() / 1000;
     if (s_booting) last_rot = now; // erste Karte nach dem Boot-Screen voll stehen lassen
+#ifdef CONFIG_DECK_SNAPSHOT
+    last_rot = now; // Aufnahmen nicht durch Blättern stören
+#endif
     if (g_settings.rotate_s && !s_booting && !overlay && !K.scrub && !SW.down && idle >= g_settings.rotate_s * 1000u &&
         now - last_rot >= g_settings.rotate_s * 1000) {
         last_rot = now;
@@ -2025,12 +2416,15 @@ static void ui_timer_cb(lv_timer_t *t)
     update_network(d);
     update_miner(d);
     update_cost(d);
+    update_halving(d);
+    update_netz(d);
     if (ticks % 10 == 0) update_age(d);
     data_unlock();
     if (ticks % 2 == 0) update_clock();
     toast_tick();
     auto_tick();
     ota_tick();
+    nz_tick();
     // Ohne WLAN: Konfiguration mit Einrichtungs-QR-Code öffnen
     static bool portal_shown = false;
     if (!portal_shown && net_state() == NET_PORTAL) {
@@ -2051,8 +2445,9 @@ static void bench_cb(lv_timer_t *t)
     static int idx = -1, wait = 0, row = -1, ticks = 0, sid = 0;
     static lv_img_dsc_t *snap;
     static const int ba_at[4] = {700, 1250, 1900, 3500}; // Block-Animation: Aufnahmezeitpunkte (ms)
+    static const float nz_st[4][2] = {{1, 1}, {2, 3.2f}, {3, 1}, {99, 1}}; // Netzanteil: Stufe, Maßstab
     ticks++;
-    if (idx >= N_TILES + 2 + 4) return;
+    if (idx >= N_TILES + 2 + 4 + 4) return;
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
@@ -2064,7 +2459,23 @@ static void bench_cb(lv_timer_t *t)
     }
     if (row < 0) {
         int k = idx - (N_TILES + 2);
-        if (k >= 0) { // Block-Animation jeweils neu starten und zum Zeitpunkt k aufnehmen
+        if (k >= 4) { // Netzanteil in festen Stufen
+            if (wait++ == 0) {
+                car_jump(CARD_NETZ, false);
+                return;
+            }
+            if (wait < 4) return;
+            if (wait == 4) {
+                lv_anim_del(&NZ, nz_zoom_exec);
+                NZ.stage = nz_st[k - 4][0] > NZ.final ? NZ.final : (int)nz_st[k - 4][0];
+                NZ.sc = nz_st[k - 4][1];
+                NZ.hold = 1000;
+                nz_draw();
+                nz_labels();
+                return;
+            }
+            if (wait < 8) return;
+        } else if (k >= 0) { // Block-Animation jeweils neu starten und zum Zeitpunkt k aufnehmen
             static int64_t t0;
             int64_t now = esp_timer_get_time() / 1000;
             if (wait++ == 0) {
@@ -2080,7 +2491,7 @@ static void bench_cb(lv_timer_t *t)
             }
             if (now - t0 < ba_at[k]) return;
         } else if (++wait < 20) return;
-        sid = k >= 0 ? 30 + k : idx;
+        sid = k >= 4 ? 40 + k - 4 : k >= 0 ? 30 + k : idx;
         snap = lv_snapshot_take(lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
         if (!snap) { printf("SNAPERR %d\n", sid); idx++; wait = 0; return; }
         printf("\nSNAP %d %d %d\n", sid, (int)snap->header.w, (int)snap->header.h);
@@ -2351,12 +2762,14 @@ void ui_init(void)
     build_chart(tiles[2]);
     build_block(tiles[3]);
     build_newblock(tiles[CARD_NEWBLOCK]);
-    build_fees(tiles[5]);
-    build_difficulty(tiles[6]);
-    build_clock(tiles[7]);
-    build_miner(tiles[8]);
-    build_cost(tiles[9]);
-    build_lottery(tiles[10]);
+    build_halving(tiles[5]);
+    build_fees(tiles[6]);
+    build_difficulty(tiles[7]);
+    build_clock(tiles[8]);
+    build_miner(tiles[9]);
+    build_netz(tiles[CARD_NETZ]);
+    build_cost(tiles[11]);
+    build_lottery(tiles[12]);
     if (!card_on(0)) car_jump(card_step(0, 1), false);
     build_overlays();
     toast_create();
