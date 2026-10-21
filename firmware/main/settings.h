@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 #define DECK_MAX_MINERS 1
+#define DECK_CARDS 9
+#define DECK_CARDS_ALL ((1u << DECK_CARDS) - 1)
+extern const char *const DECK_CARD_NAMES[DECK_CARDS];
 
 typedef struct {
     char wifi_ssid[33];
@@ -23,6 +26,7 @@ typedef struct {
     uint8_t brightness;  // 5..100 %
     uint8_t chart_style; // Chart-Fläche: 0 = Punkte, 1 = ohne Verlauf
     bool auto_update;    // OTA-Updates automatisch installieren
+    uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 8 = Lotterie)
 } deck_settings_t;
 
 extern deck_settings_t g_settings;

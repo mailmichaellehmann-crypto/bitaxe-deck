@@ -9,7 +9,10 @@ Das Display holt sich die Daten selbst über WLAN, ein Rechner muss dafür nicht
 
 ## Karten
 
-Alle Karten füllen den ganzen Bildschirm (ohne Kopfzeile und Überschriften). Nach links oder rechts wischen.
+Alle Karten füllen den ganzen Bildschirm (ohne Kopfzeile und Überschriften). Zum Blättern nach links oder
+rechts wischen oder auf den linken bzw. rechten Rand tippen (je ein Viertel der Breite). Die Karten laufen
+endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. Ausgeschaltete Karten werden
+übersprungen.
 
 | # | Karte | Inhalt |
 |---|-------|--------|
@@ -32,9 +35,10 @@ aber nicht erreichbar, steht dort **OFFLINE** in Rot, mit dem Grund; auch dann l
 
 ## Boot-Screen
 
-Nach jedem Start zeigt das Display etwa 10 Sekunden lang einen Boot-Screen: Pixel-Mosaik in einer
-diagonalen Welle, Schriftzug „Satoshi Deck“ und der echte Startvorgang (Display, WLAN, Bitaxe, Kurs,
-Block). Ein Tippen überspringt ihn.
+Nach jedem Start zeigt das Display einen Boot-Screen: Pixel-Mosaik in einer diagonalen Welle,
+Schriftzug „Satoshi Deck“ und der echte Startvorgang (Display, WLAN, Bitaxe, Kurs, Block). Er bleibt
+stehen, bis alle Daten geladen sind (WLAN mit Uhrzeit, Bitaxe erreicht oder als offline erkannt, Kurs
+und Chart, Blockdaten), mindestens etwa 5 Sekunden und höchstens 45 Sekunden. Ein Tippen überspringt ihn.
 
 ## Share-Lotterie
 
@@ -57,9 +61,13 @@ Netzwerk-Difficulty, also ein Block. Ohne erreichbaren Bitaxe wird die Verteilun
 - **Chart**: Zeitraum 24h / 7T / 30T / 1J
 - unten: Kartenmenü (Raster-Symbol), Helligkeit, Schließen (✕)
 
-Im **Kartenmenü** springt ein Tippen direkt zur Karte; die aktuelle ist blau markiert. Zahnrad bzw. „Einstellungen“ führen zur Konfiguration.
+Im **Kartenmenü** springt ein Tippen direkt zur Karte; die aktuelle ist pink umrandet. Mit dem Schalter
+oben rechts in jeder Kachel lässt sich die Karte ein- oder ausschalten; ausgeschaltete Karten erscheinen
+weder beim Blättern noch beim automatischen Seitenwechsel. Eine Karte bleibt immer an. Zahnrad bzw.
+„Einstellungen“ führen zur Konfiguration.
 
 Im Browser lässt sich außerdem die **Chart-Fläche** wählen: Punkte (Standard) oder ohne Verlauf (nur die Linie).
+Unter **Karten** stehen dort dieselben Ein/Aus-Schalter wie im Kartenmenü.
 
 ## Einrichtung (einmalig)
 

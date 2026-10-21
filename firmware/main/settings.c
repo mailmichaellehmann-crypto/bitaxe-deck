@@ -14,7 +14,10 @@ deck_settings_t g_settings = {
     .brightness = 80,
     .chart_style = 0,
     .auto_update = true,
+    .card_mask = DECK_CARDS_ALL,
 };
+
+const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis", "USD / EUR", "Chart", "Block", "Gebühren", "Difficulty", "Uhr", "Bitaxe", "Lotterie"};
 
 static const char *MINER_KEYS[DECK_MAX_MINERS] = {"bitaxe"};
 
@@ -59,6 +62,8 @@ void settings_load(void)
     get_u8(h, "cstyle", &g_settings.chart_style);
     uint16_t r;
     if (nvs_get_u16(h, "rot", &r) == ESP_OK) g_settings.rotate_s = r;
+    if (nvs_get_u16(h, "cards", &r) == ESP_OK) g_settings.card_mask = r & DECK_CARDS_ALL;
+    if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;
     nvs_close(h);
     if (g_settings.chart_range > 3) g_settings.chart_range = 0;
     if (g_settings.chart_style > 1) g_settings.chart_style = 0; // früherer Stil „Verlauf“ -> Punkte
@@ -86,6 +91,7 @@ void settings_save(void)
     nvs_set_u8(h, "bright", g_settings.brightness);
     nvs_set_u8(h, "cstyle", g_settings.chart_style);
     nvs_set_u16(h, "rot", g_settings.rotate_s);
+    nvs_set_u16(h, "cards", g_settings.card_mask);
     nvs_commit(h);
     nvs_close(h);
 }

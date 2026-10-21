@@ -58,6 +58,11 @@ static const char *PAGE_HEAD =
     "background:#000;border:1px solid var(--line);-webkit-appearance:none;appearance:none}"
     "input:focus,select:focus{outline:none;border-color:var(--fg)}"
     "input::placeholder{color:var(--dim)}"
+    ".cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}"
+    ".cards label{display:flex;align-items:center;gap:10px;margin:0;padding:11px 14px;border:1px solid var(--line);"
+    "border-radius:10px;font:15px var(--sans);letter-spacing:0;text-transform:none;color:var(--fg);cursor:pointer}"
+    ".cards input{flex:none;width:16px;height:16px;padding:0;border-radius:4px}"
+    ".cards input:checked{background:var(--pink);border-color:var(--pink)}"
     ".row{display:flex;gap:10px}"
     "button{margin-top:32px;padding:13px 26px;border:0;border-radius:999px;font:500 14px var(--mono);"
     "color:#000;background:var(--fg);cursor:pointer}"
@@ -86,6 +91,11 @@ static esp_err_t root_get(httpd_req_t *req)
     case OTA_FAILED: snprintf(ota_line, sizeof(ota_line), "%s", o.error); break;
     default: snprintf(ota_line, sizeof(ota_line), "noch nicht geprüft"); break;
     }
+    char cards[1400];
+    int cl = 0;
+    for (int i = 0; i < DECK_CARDS; i++)
+        cl += snprintf(cards + cl, sizeof(cards) - cl, "<label><input type=checkbox name=c%d value=1%s>%s</label>", i,
+                       (g_settings.card_mask >> i) & 1 ? " checked" : "", DECK_CARD_NAMES[i]);
     snprintf(html, 12288,
              "%s<h1>Satoshi Deck</h1><p>Einstellungen für dein Display. <span class=acc>Speichern startet es neu.</span></p>"
              "<form method=post action=/save>"
@@ -104,6 +114,7 @@ static esp_err_t root_get(httpd_req_t *req)
              "<option value=0 %s>Punkte</option><option value=1 %s>Ohne Verlauf</option></select>"
              "<label>Automatische Updates</label><select name=aupd>"
              "<option value=1 %s>Ein – nachts bzw. wenn niemand das Display benutzt</option><option value=0 %s>Aus</option></select>"
+             "<div class=sec>Karten</div><input type=hidden name=cards value=1><div class=cards>%s</div>"
              "<button>Speichern &rarr;</button></form>"
              "<div class=sec>Firmware</div>"
              "<p>Installiert: <b>%s</b> · %s</p>"
@@ -116,7 +127,7 @@ static esp_err_t root_get(httpd_req_t *req)
              g_settings.wifi_pass[0] ? "unverändert lassen" : "", g_settings.bitaxe_host[0],
              settings_cur(), g_settings.alarm_hi, settings_cur(), g_settings.alarm_lo, g_settings.night_from, g_settings.night_to,
              g_settings.chart_style == 0 ? "selected" : "", g_settings.chart_style == 1 ? "selected" : "",
-             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected",
+             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", cards,
              deck_version(), ota_line, ota_btn);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, html);
@@ -149,7 +160,7 @@ static void restart_cb(void *arg) { esp_restart(); }
 
 static esp_err_t save_post(httpd_req_t *req)
 {
-    char body[1024] = {0};
+    char body[1280] = {0};
     int total = 0;
     while (total < (int)sizeof(body) - 1) {
         int r = httpd_req_recv(req, body + total, sizeof(body) - 1 - total);
@@ -174,6 +185,15 @@ static esp_err_t save_post(httpd_req_t *req)
     if (form_field(body, "n_to", v, sizeof(v))) { int h = atoi(v); if (h >= 0 && h < 24) g_settings.night_to = h; }
     if (form_field(body, "aupd", v, sizeof(v))) g_settings.auto_update = atoi(v) != 0;
     if (form_field(body, "cstyle", v, sizeof(v))) { int c = atoi(v); if (c >= 0 && c <= 1) g_settings.chart_style = c; }
+    if (form_field(body, "cards", v, sizeof(v))) { // nicht angehakte Kästchen werden nicht mitgeschickt
+        uint16_t m = 0;
+        for (int i = 0; i < DECK_CARDS; i++) {
+            char k[4];
+            snprintf(k, sizeof(k), "c%d", i);
+            if (form_field(body, k, v, sizeof(v))) m |= 1u << i;
+        }
+        g_settings.card_mask = m ? m : DECK_CARDS_ALL; // mindestens eine Karte bleibt an
+    }
     if (form_field(body, "kwh", v, sizeof(v))) {
         for (char *c = v; *c; c++) if (*c == ',') *c = '.';
         float f = strtof(v, NULL);

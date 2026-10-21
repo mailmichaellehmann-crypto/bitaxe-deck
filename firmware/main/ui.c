@@ -104,7 +104,6 @@ static const char *cur_sym(void) { return g_settings.currency ? "€" : "$"; }
 
 // ------------------------------------------------------------------ Grundbausteine
 
-static lv_obj_t *s_tv;
 
 static void no_scroll(lv_obj_t *o)
 {
@@ -361,6 +360,158 @@ static struct {
     bool scrub;
 } K;
 
+// ------------------------------------------------------------------ Karten-Wechsler
+// Eigener Wechsler statt lv_tileview: wischen oder links/rechts tippen, endlos im Kreis,
+// ausgeschaltete Karten werden übersprungen. Nur die aktuelle (und beim Wechsel die nächste)
+// Karte ist sichtbar.
+static lv_obj_t *s_card[N_TILES];
+static int s_cur = 0;       // aktuelle Karte
+static int s_nb = -1;       // Nachbarkarte während Wischen/Animation
+static int s_dir = 1;       // +1 = nächste kommt von rechts, -1 = vorige von links
+static bool s_animating;
+static bool s_booting = true; // Boot-Screen sichtbar: kein automatischer Seitenwechsel
+static struct { bool down, drag, long_pr; lv_point_t p0; int64_t t0; int dx; } SW;
+static void open_cfg(void);
+
+static bool card_on(int i) { return (g_settings.card_mask >> i) & 1; }
+
+static int card_step(int from, int dir)
+{
+    for (int k = 1; k <= N_TILES; k++) {
+        int i = ((from + dir * k) % N_TILES + N_TILES) % N_TILES;
+        if (card_on(i)) return i;
+    }
+    return from;
+}
+
+static void car_place(int dx)
+{
+    lv_obj_set_x(s_card[s_cur], dx);
+    if (s_nb >= 0 && s_nb != s_cur) lv_obj_set_x(s_card[s_nb], (s_dir > 0 ? W : -W) + dx);
+}
+
+static void car_set_nb(int dir)
+{
+    int nb = card_step(s_cur, dir);
+    if (s_nb >= 0 && s_nb != nb && s_nb != s_cur) lv_obj_add_flag(s_card[s_nb], LV_OBJ_FLAG_HIDDEN);
+    s_dir = dir;
+    s_nb = nb == s_cur ? -1 : nb;
+    if (s_nb >= 0) lv_obj_clear_flag(s_card[s_nb], LV_OBJ_FLAG_HIDDEN);
+}
+
+static void car_anim_exec(void *var, int32_t v) { car_place(v); }
+
+static void car_anim_ready(lv_anim_t *a)
+{
+    bool switched = a->end_value != 0;
+    if (switched && s_nb >= 0) {
+        lv_obj_add_flag(s_card[s_cur], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_x(s_card[s_cur], 0);
+        s_cur = s_nb;
+    } else if (s_nb >= 0) {
+        lv_obj_add_flag(s_card[s_nb], LV_OBJ_FLAG_HIDDEN);
+    }
+    s_nb = -1;
+    lv_obj_set_x(s_card[s_cur], 0);
+    s_animating = false;
+}
+
+static void car_animate(int from, int to, int ms)
+{
+    s_animating = true;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_card[s_cur]);
+    lv_anim_set_exec_cb(&a, car_anim_exec);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_time(&a, ms);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_ready_cb(&a, car_anim_ready);
+    lv_anim_start(&a);
+}
+
+// eine Karte weiter (+1) oder zurück (-1), mit Animation
+static void car_go(int dir)
+{
+    if (s_animating || SW.drag) return;
+    car_set_nb(dir);
+    if (s_nb < 0) return;
+    car_place(0);
+    car_animate(0, dir > 0 ? -W : W, 280);
+}
+
+// direkt zu einer Karte springen (Menü, Preisalarm)
+static void car_jump(int idx, bool anim)
+{
+    if (idx < 0 || idx >= N_TILES) return;
+    if (idx == s_cur && !s_animating && s_nb < 0) return;
+    if (anim && !s_animating && idx != s_cur) {
+        if (s_nb >= 0) lv_obj_add_flag(s_card[s_nb], LV_OBJ_FLAG_HIDDEN);
+        s_dir = 1;
+        s_nb = idx;
+        lv_obj_clear_flag(s_card[s_nb], LV_OBJ_FLAG_HIDDEN);
+        car_place(0);
+        car_animate(0, -W, 280);
+        return;
+    }
+    lv_anim_del(s_card[s_cur], car_anim_exec);
+    for (int i = 0; i < N_TILES; i++) {
+        lv_obj_set_x(s_card[i], 0);
+        if (i != idx) lv_obj_add_flag(s_card[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_clear_flag(s_card[idx], LV_OBJ_FLAG_HIDDEN);
+    s_cur = idx;
+    s_nb = -1;
+    s_animating = false;
+}
+
+static int car_current(void) { return s_cur; }
+
+static void card_event_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_point_t p;
+    lv_indev_t *in = lv_indev_get_act();
+    if (!in) return;
+    lv_indev_get_point(in, &p);
+    if (code == LV_EVENT_PRESSED) {
+        SW.down = true;
+        SW.drag = false;
+        SW.long_pr = false;
+        SW.p0 = p;
+        SW.t0 = esp_timer_get_time() / 1000;
+        SW.dx = 0;
+    } else if (code == LV_EVENT_PRESSING && SW.down) {
+        if (K.scrub || s_animating) return;
+        int dx = p.x - SW.p0.x, dy = p.y - SW.p0.y;
+        if (!SW.drag && abs(dx) > 10 && abs(dx) > abs(dy)) {
+            SW.drag = true;
+            car_set_nb(dx < 0 ? 1 : -1);
+        }
+        if (SW.drag) {
+            int dir = dx < 0 ? 1 : -1;
+            if (dir != s_dir) car_set_nb(dir); // Richtung gewechselt
+            SW.dx = dx;
+            car_place(dx);
+        }
+    } else if (code == LV_EVENT_LONG_PRESSED) {
+        SW.long_pr = true;
+        if (!SW.drag && lv_event_get_target(e) != K.hit) open_cfg();
+    } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) && SW.down) {
+        SW.down = false;
+        if (SW.drag) {
+            SW.drag = false;
+            int64_t dt = esp_timer_get_time() / 1000 - SW.t0;
+            bool fling = dt < 300 && abs(SW.dx) > 40;
+            if (s_nb >= 0 && (abs(SW.dx) > W / 4 || fling)) car_animate(SW.dx, s_dir > 0 ? -W : W, 220);
+            else car_animate(SW.dx, 0, 200);
+        } else if (!SW.long_pr && !K.scrub && code == LV_EVENT_RELEASED) {
+            if (p.x < W / 4) car_go(-1);
+            else if (p.x > W * 3 / 4) car_go(1);
+        }
+    }
+}
+
 static int val_y(double v) { return (int)((1.0 - (v - K.mn) / (K.mx - K.mn)) * (CH_H - 1) + 0.5); }
 
 static void chart_draw(void)
@@ -431,8 +582,8 @@ static void scrub_cb(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (K.n < 2) return;
     if (code == LV_EVENT_LONG_PRESSED) {
+        if (SW.drag) return; // gerade am Wischen
         K.scrub = true;
-        lv_obj_clear_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_clear_flag(K.xline, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(K.xdot, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(K.tip, LV_OBJ_FLAG_HIDDEN);
@@ -441,7 +592,6 @@ static void scrub_cb(lv_event_t *e)
         scrub_update();
     } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) && K.scrub) {
         K.scrub = false;
-        lv_obj_add_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(K.xline, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(K.xdot, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(K.tip, LV_OBJ_FLAG_HIDDEN);
@@ -746,7 +896,7 @@ static void lottery_tick(lv_timer_t *t)
     else strcpy(n2, "–");
     snprintf(b, sizeof(b), "%s Hashes  ·  bis zum Block fehlt noch Faktor #FFD4D4 %s#", n1, n2);
     lv_label_set_text(L.foot, b);
-    bool visible = lv_tileview_get_tile_act(s_tv) == L.tile;
+    bool visible = s_card[car_current()] == L.tile && s_nb < 0;
     double last = st->last;
     if (!visible || !newer || !lv_obj_has_flag(L.drop, LV_OBJ_FLAG_HIDDEN)) {
         lottery_draw(st);
@@ -1049,13 +1199,13 @@ static void check_price_alarm(double px)
         fmt_de(n, sizeof(n), g_settings.alarm_hi, 0);
         snprintf(b, sizeof(b), "Kurs über %s %s", n, cur_sym());
         toast_show("PREISALARM", b, 30000);
-        lv_obj_set_tile_id(s_tv, 0, 0, LV_ANIM_ON);
+        car_jump(0, true);
     } else if (g_settings.alarm_lo > 0 && px <= g_settings.alarm_lo && state != -1) {
         state = -1;
         fmt_de(n, sizeof(n), g_settings.alarm_lo, 0);
         snprintf(b, sizeof(b), "Kurs unter %s %s", n, cur_sym());
         toast_show("PREISALARM", b, 30000);
-        lv_obj_set_tile_id(s_tv, 0, 0, LV_ANIM_ON);
+        car_jump(0, true);
     } else if (state == 1 && px < g_settings.alarm_hi * 0.995) state = 0;
     else if (state == -1 && px > g_settings.alarm_lo * 1.005) state = 0;
 }
@@ -1229,7 +1379,23 @@ static lv_obj_t *round_btn(lv_obj_t *p, int x, int y, int d, const char *s, cons
     lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_set_ext_click_area(b, 8);
-    if (s) txt(b, d, f, C_TEXT, s, 'c', d / 2, d / 2 + ascent(f) / 2 - 1);
+    if (s) {
+        // Zeichen nach seinem tatsächlichen Umriss mittig setzen (nicht nach der Textzeile)
+        lv_obj_t *l = lv_label_create(b);
+        lv_obj_set_style_text_font(l, f, 0);
+        lv_obj_set_style_text_color(l, C_TEXT, 0);
+        lv_label_set_text(l, s);
+        uint32_t i = 0, letter = _lv_txt_encoded_next(s, &i);
+        lv_font_glyph_dsc_t g;
+        float c = (d - 2) / 2.0f; // Innenmaß ohne 1-px-Rahmen
+        if (lv_font_get_glyph_dsc(f, &g, letter, 0)) {
+            float gx = c - g.ofs_x - g.box_w / 2.0f;
+            float gy = c - ascent(f) + g.ofs_y + g.box_h / 2.0f;
+            lv_obj_set_pos(l, (lv_coord_t)lroundf(gx), (lv_coord_t)lroundf(gy));
+        } else {
+            lv_obj_center(l);
+        }
+    }
     return b;
 }
 
@@ -1238,9 +1404,9 @@ static lv_obj_t *stepper_tile(lv_obj_t *p, int x, int y, const char *title, int 
     lv_obj_t *pn = panel(p, x, y, 144, 78);
     cap(pn, 144, title, 'l', 12, 24);
     lv_obj_t *v = txt(pn, 144, &font_g20, C_TEXT, "", 'l', 12, 60);
-    lv_obj_t *m = round_btn(pn, 144 - 12 - 26 - 6 - 26, 39, 26, "–", &font_m16);
+    lv_obj_t *m = round_btn(pn, 144 - 12 - 26 - 6 - 26, 39, 26, "–", &font_m20);
     lv_obj_add_event_cb(m, step_cb, LV_EVENT_CLICKED, (void *)(intptr_t)code_minus);
-    lv_obj_t *pl = round_btn(pn, 144 - 12 - 26, 39, 26, "+", &font_m16);
+    lv_obj_t *pl = round_btn(pn, 144 - 12 - 26, 39, 26, "+", &font_m20);
     lv_obj_add_event_cb(pl, step_cb, LV_EVENT_CLICKED, (void *)(intptr_t)(code_minus + 1));
     return v;
 }
@@ -1284,11 +1450,34 @@ static void open_cfg(void)
     lv_obj_clear_flag(s_cfg, LV_OBJ_FLAG_HIDDEN);
 }
 
+static lv_obj_t *s_menu_sw[9], *s_menu_knob[9], *s_menu_name[9];
+
+static void menu_refresh(void)
+{
+    for (int i = 0; i < 9; i++) {
+        bool on = card_on(i);
+        lv_obj_set_style_border_color(s_menu_tile[i], i == s_cur ? C_PINK : C_LINE, 0);
+        lv_obj_set_style_text_color(s_menu_name[i], on ? C_TEXT : C_TEXT3, 0);
+        lv_obj_set_style_bg_color(s_menu_sw[i], on ? C_PINK : C_LINE, 0);
+        lv_obj_set_style_bg_color(s_menu_knob[i], on ? C_BG : C_TEXT2, 0);
+        lv_obj_set_x(s_menu_knob[i], on ? 34 - 14 - 2 : 2);
+    }
+}
+
+static void card_toggle_cb(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    uint16_t m = g_settings.card_mask ^ (1u << i);
+    if (!m) return; // mindestens eine Karte bleibt an
+    g_settings.card_mask = m;
+    settings_save();
+    if (!card_on(s_cur)) car_jump(card_step(s_cur, 1), false);
+    menu_refresh();
+}
+
 static void open_menu(void)
 {
-    lv_obj_t *act = lv_tileview_get_tile_act(s_tv);
-    for (int i = 0; i < 9; i++)
-        lv_obj_set_style_border_color(s_menu_tile[i], i < N_TILES && lv_obj_get_child(s_tv, i) == act ? C_PINK : C_LINE, 0);
+    menu_refresh();
     lv_obj_add_flag(s_cfg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
 }
@@ -1299,12 +1488,11 @@ static void to_cfg_cb(lv_event_t *e) { open_cfg(); }
 static void menu_item_cb(lv_event_t *e)
 {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    if (idx >= N_TILES) { open_cfg(); return; }
+    if (!card_on(idx)) return; // ausgeschaltete Karte: erst einschalten
     overlay_close();
-    lv_obj_set_tile_id(s_tv, idx, 0, LV_ANIM_OFF);
+    car_jump(idx, false);
 }
 
-static void long_press_cb(lv_event_t *e) { open_cfg(); }
 
 // Untere Leiste: runder Knopf links, Helligkeit, Schließen
 static void bottom_bar(lv_obj_t *p, int si, bool gear)
@@ -1313,7 +1501,7 @@ static void bottom_bar(lv_obj_t *p, int si, bool gear)
     if (!gear) {
         for (int r = 0; r < 3; r++)
             for (int c = 0; c < 3; c++) {
-                lv_obj_t *q = rect(l, 10 + c * 5, 10 + r * 5, 3, 3, C_TEXT);
+                lv_obj_t *q = rect(l, (34 - 2 - 13) / 2 + c * 5, (34 - 2 - 13) / 2 + r * 5, 3, 3, C_TEXT);
                 lv_obj_clear_flag(q, LV_OBJ_FLAG_CLICKABLE);
             }
     }
@@ -1371,7 +1559,7 @@ static void build_overlays(void)
     // Kartenmenü
     s_menu = rect(lv_scr_act(), 0, 0, W, H, C_BG);
     lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_EVENT_BUBBLE);
-    static const char *names[9] = {"Preis", "USD / EUR", "Chart", "Block", "Gebühren", "Difficulty", "Uhr", "Bitaxe", "Lotterie"};
+    const char *const *names = DECK_CARD_NAMES;
     static const char *nums[9] = {"01", "02", "03", "04", "05", "06", "07", "08", "09"};
     for (int i = 0; i < 9; i++) {
         lv_obj_t *b = panel(s_menu, xs[i % 3], 14 + (i / 3) * 86, 144, 80);
@@ -1379,9 +1567,20 @@ static void build_overlays(void)
         lv_obj_clear_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x111111), LV_STATE_PRESSED);
         txt(b, 144, &font_m12, C_TEXT3, nums[i], 'l', 12, 24);
-        txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 64);
+        s_menu_name[i] = txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 64);
         lv_obj_add_event_cb(b, menu_item_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         s_menu_tile[i] = b;
+        // Schalter: Karte ein/aus
+        lv_obj_t *sw = rect(b, 144 - 12 - 34, 11, 34, 18, C_LINE);
+        lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, 0);
+        lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(sw, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_set_ext_click_area(sw, 14);
+        lv_obj_add_event_cb(sw, card_toggle_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        s_menu_sw[i] = sw;
+        s_menu_knob[i] = rect(sw, 2, 2, 14, 14, C_TEXT2);
+        lv_obj_set_style_radius(s_menu_knob[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_clear_flag(s_menu_knob[i], LV_OBJ_FLAG_CLICKABLE);
     }
     bottom_bar(s_menu, 1, true);
     lv_obj_add_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
@@ -1394,12 +1593,11 @@ static void auto_tick(void)
     bool overlay = !lv_obj_has_flag(s_cfg, LV_OBJ_FLAG_HIDDEN) || !lv_obj_has_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
     static int64_t last_rot = 0;
     int64_t now = esp_timer_get_time() / 1000;
-    if (g_settings.rotate_s && !overlay && !K.scrub && idle >= g_settings.rotate_s * 1000u && now - last_rot >= g_settings.rotate_s * 1000) {
+    if (s_booting) last_rot = now; // erste Karte nach dem Boot-Screen voll stehen lassen
+    if (g_settings.rotate_s && !s_booting && !overlay && !K.scrub && !SW.down && idle >= g_settings.rotate_s * 1000u &&
+        now - last_rot >= g_settings.rotate_s * 1000) {
         last_rot = now;
-        lv_obj_t *act = lv_tileview_get_tile_act(s_tv);
-        int idx = 0;
-        for (int i = 0; i < N_TILES; i++) if (lv_obj_get_child(s_tv, i) == act) idx = i;
-        lv_obj_set_tile_id(s_tv, (idx + 1) % N_TILES, 0, LV_ANIM_ON);
+        car_go(1);
     }
     static int cur = -1;
     int want = g_settings.brightness;
@@ -1455,7 +1653,7 @@ static void bench_cb(lv_timer_t *t)
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
         if (!ready && ticks < 900) return;
         idx = 0;
-        lv_obj_set_tile_id(s_tv, idx, 0, LV_ANIM_OFF);
+        car_jump(idx, false);
         wait = 0;
         return;
     }
@@ -1480,7 +1678,7 @@ static void bench_cb(lv_timer_t *t)
         row = -1;
         wait = 0;
         ++idx;
-        if (idx < N_TILES) lv_obj_set_tile_id(s_tv, idx, 0, LV_ANIM_OFF);
+        if (idx < N_TILES) car_jump(idx, false);
         else if (idx == N_TILES) open_cfg();
         else if (idx == N_TILES + 1) open_menu();
         else overlay_close();
@@ -1495,7 +1693,7 @@ static void bench_cb(lv_timer_t *t)
     if (idx < N_TILES) {
         if (frame == 0) {
             idx++;
-            if (idx < N_TILES) lv_obj_set_tile_id(s_tv, idx, 0, LV_ANIM_OFF);
+            if (idx < N_TILES) car_jump(idx, false);
         }
         if (idx >= N_TILES) return;
         if (frame == 3) { g_perf_sum = 0; g_perf_n = 0; }
@@ -1507,18 +1705,18 @@ static void bench_cb(lv_timer_t *t)
         return;
     }
     if (++frame % 25 == 0) {
-        if (k + dir < 0 || k + dir >= N_TILES) dir = -dir;
-        k += dir;
-        lv_obj_set_tile_id(s_tv, k, 0, LV_ANIM_ON);
+        (void)k;
+        (void)dir;
+        car_go(1);
     }
 }
 #endif
 
 
-// ------------------------------------------------------------------ Boot-Screen (ca. 10 s nach dem Start)
+// ------------------------------------------------------------------ Boot-Screen (bis alle Daten geladen sind)
 // Pixel-Mosaik baut sich in einer diagonalen Welle auf, Schriftzug blendet ein, darunter der echte
 // Startvorgang (Display, WLAN, Bitaxe, Kurs, Block). Ein Tippen überspringt ihn.
-#define BOOT_MS 10000
+#define BOOT_MAX_MS 45000 // höchstens so lange, falls etwas nicht lädt
 #define BC 8 // Mosaik-Zelle
 static struct {
     lv_obj_t *scr, *word, *sub, *ver, *row_v[5], *row_d[5], *cells[55];
@@ -1538,6 +1736,7 @@ static void boot_done(lv_anim_t *a)
     heap_caps_free(BS.mos.buf); // 300 KB Mosaik-Puffer wieder freigeben
     BS.mos.buf = NULL;
     BS.scr = NULL;
+    s_booting = false;
 }
 
 static void boot_close(void)
@@ -1596,39 +1795,52 @@ static void boot_tick(lv_timer_t *t)
     lv_obj_set_style_text_opa(BS.sub, wo, 0);
     lv_obj_set_style_text_opa(BS.ver, wo, 0);
 
-    // Startvorgang mit echten Daten
+    // Startvorgang mit echten Daten: Zeilen erscheinen gestaffelt, der Screen bleibt,
+    // bis alles geladen ist (mind. 4,5 s für die Animation, höchstens 45 s)
     char b[64], n[24];
-    if (ms > 2600) boot_row(0, "480 × 320 · LVGL 8.4", true);
-    if (ms > 3400) {
-        char ip[20];
-        net_ip(ip, sizeof(ip));
-        net_state_t st = net_state();
-        if (st == NET_CONNECTED) { snprintf(b, sizeof(b), "%s · %s", g_settings.wifi_ssid, ip); boot_row(1, b, true); }
-        else if (st == NET_PORTAL) boot_row(1, "Einrichtung · " DECK_AP_SSID, true);
-        else boot_row(1, "verbinde …", false);
+    bool ok[5] = {true, false, false, false, false};
+    char ip[20];
+    net_ip(ip, sizeof(ip));
+    net_state_t st = net_state();
+    if (st == NET_PORTAL) {
+        if (ms > 3000) { boot_close(); return; } // Einrichtung öffnet sich
     }
+    if (ms > 2400) boot_row(0, "480 × 320 · LVGL 8.4", true);
+    if (st == NET_CONNECTED && net_time_valid()) { ok[1] = true; snprintf(b, sizeof(b), "%s · %s", g_settings.wifi_ssid, ip); }
+    else snprintf(b, sizeof(b), st == NET_CONNECTED ? "Uhrzeit …" : "verbinde …");
+    if (ms > 2900) boot_row(1, b, ok[1]);
     data_lock();
     deck_data_t *d = data_get();
-    if (ms > 4400) {
-        miner_t *m = &d->miners[0];
-        if (d->miner_n && m->mode == MINER_ONLINE) {
-            fmt_de(n, sizeof(n), m->hashrate_gh / 1000, 2);
-            snprintf(b, sizeof(b), "%s TH/s · %s", n, m->host);
-            boot_row(2, b, true);
-        } else boot_row(2, g_settings.bitaxe_host[0][0] ? "suche …" : "Demo", d->miner_n && m->mode == MINER_DEMO);
-    }
-    if (ms > 5400) {
-        if (d->price_ok) {
-            fmt_de(n, sizeof(n), g_settings.currency ? d->eur : d->usd, 0);
-            snprintf(b, sizeof(b), "%s %s", n, settings_cur());
-            boot_row(3, b, true);
-        } else boot_row(3, "lade …", false);
-    }
-    if (ms > 6400) {
-        if (d->net_ok) { snprintf(b, sizeof(b), "%u", (unsigned)d->height); boot_row(4, b, true); }
-        else boot_row(4, "lade …", false);
-    }
+    miner_t *m = &d->miners[0];
+    if (!g_settings.bitaxe_host[0][0]) { ok[2] = d->miner_n > 0; snprintf(b, sizeof(b), "Demo"); }
+    else if (d->miner_n && m->mode == MINER_ONLINE) {
+        ok[2] = true;
+        fmt_de(n, sizeof(n), m->hashrate_gh / 1000, 2);
+        snprintf(b, sizeof(b), "%s TH/s · %s", n, m->host);
+    } else if (d->miner_n && m->mode == MINER_OFFLINE) { ok[2] = true; snprintf(b, sizeof(b), "nicht erreichbar · %s", m->host); }
+    else snprintf(b, sizeof(b), "suche %s …", g_settings.bitaxe_host[0]);
+    if (ms > 3400) boot_row(2, b, ok[2]);
+    if (d->price_ok && d->chart_ok) {
+        ok[3] = true;
+        fmt_de(n, sizeof(n), g_settings.currency ? d->eur : d->usd, 0);
+        snprintf(b, sizeof(b), "%s %s · Chart %s", n, settings_cur(), RANGE_NAMES[d->chart_range]);
+    } else snprintf(b, sizeof(b), d->price_ok ? "Chart …" : "lade …");
+    if (ms > 3900) boot_row(3, b, ok[3]);
+    if (d->net_ok) { ok[4] = true; snprintf(b, sizeof(b), "%u · Gebühren · Difficulty", (unsigned)d->height); }
+    else snprintf(b, sizeof(b), "lade …");
+    if (ms > 4400) boot_row(4, b, ok[4]);
     data_unlock();
+    int done = 0;
+    for (int i = 0; i < 5; i++) done += ok[i];
+    // Fortschritt: folgt den geladenen Daten, kriecht dazwischen langsam weiter
+    static int shown = 0;
+    int target = done * 11, crawl = done < 5 ? 9 : 0;
+    int goal = target + (int)(crawl * (1.0f - expf(-(ms % 60000) / 8000.0f)));
+    if (goal > 55) goal = 55;
+    if (shown < goal && ms % 2 == 0) shown++;
+    static int64_t all_ok_at = 0;
+    if (done == 5 && !all_ok_at) all_ok_at = ms;
+    if (done == 5) shown = shown + 2 > 55 ? 55 : shown + 2;
 #ifdef CONFIG_DECK_SNAPSHOT
     static int shot = 0;
     static const int when[3] = {1300, 3800, 8600};
@@ -1650,9 +1862,8 @@ static void boot_tick(lv_timer_t *t)
         shot++;
     }
 #endif
-    int n55 = (int)(ms * 55 / BOOT_MS);
-    for (int i = 0; i < 55; i++) lv_obj_set_style_bg_color(BS.cells[i], i < n55 ? C_PINK : C_LINE, 0);
-    if (ms >= BOOT_MS) boot_close();
+    for (int i = 0; i < 55; i++) lv_obj_set_style_bg_color(BS.cells[i], i < shown ? C_PINK : C_LINE, 0);
+    if ((all_ok_at && ms >= 4800 && ms - all_ok_at > 600 && shown >= 55) || ms >= BOOT_MAX_MS) boot_close();
 }
 
 static void build_boot(void)
@@ -1705,17 +1916,13 @@ void ui_init(void)
     lv_obj_set_style_text_font(scr, &font_m14, 0);
     lv_obj_set_style_text_color(scr, C_TEXT, 0);
 
-    s_tv = lv_tileview_create(scr);
-    lv_obj_set_pos(s_tv, 0, 0);
-    lv_obj_set_size(s_tv, W, H);
-    lv_obj_set_style_bg_color(s_tv, C_BG, 0);
-    lv_obj_set_style_bg_opa(s_tv, LV_OPA_COVER, 0);
-    lv_obj_set_scrollbar_mode(s_tv, LV_SCROLLBAR_MODE_OFF);
     lv_obj_t *tiles[N_TILES];
     for (int i = 0; i < N_TILES; i++) {
-        lv_dir_t dir = (i > 0 ? LV_DIR_LEFT : 0) | (i < N_TILES - 1 ? LV_DIR_RIGHT : 0);
-        tiles[i] = lv_tileview_add_tile(s_tv, i, 0, dir);
-        lv_obj_set_scrollbar_mode(tiles[i], LV_SCROLLBAR_MODE_OFF);
+        tiles[i] = rect(scr, 0, 0, W, H, C_BG);
+        lv_obj_clear_flag(tiles[i], LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_event_cb(tiles[i], card_event_cb, LV_EVENT_ALL, NULL);
+        s_card[i] = tiles[i];
+        if (i) lv_obj_add_flag(tiles[i], LV_OBJ_FLAG_HIDDEN);
     }
     build_price(tiles[0]);
     build_dual(tiles[1]);
@@ -1726,7 +1933,7 @@ void ui_init(void)
     build_clock(tiles[6]);
     build_miner(tiles[7]);
     build_lottery(tiles[8]);
-    for (int i = 0; i < N_TILES; i++) lv_obj_add_event_cb(tiles[i], long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
+    if (!card_on(0)) car_jump(card_step(0, 1), false);
     build_overlays();
     toast_create();
     build_update_screen();
