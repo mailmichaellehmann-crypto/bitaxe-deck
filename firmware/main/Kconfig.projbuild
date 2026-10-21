@@ -1,4 +1,4 @@
-menu "Bitaxe Deck"
+menu "Satoshi Deck"
     config DECK_OTA_REPO
         string "GitHub-Repository für Updates (besitzer/name)"
         default "mailmichaellehmann-crypto/bitaxe-deck"

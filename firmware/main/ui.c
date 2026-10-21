@@ -1,4 +1,4 @@
-// Bitaxe Deck – Oberfläche für 480x320 (LVGL 8.4) im Strike-Stil
+// Satoshi Deck – Oberfläche für 480x320 (LVGL 8.4) im Strike-Stil
 // Karten (nach links/rechts wischen):
 //  0 Preis · 1 USD & EUR · 2 Chart · 3 Block · 4 Gebühren · 5 Difficulty · 6 Uhr · 7 Bitaxe · 8 Share-Lotterie
 // Gestaltung: tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen, Geist Mono für
@@ -1675,7 +1675,7 @@ static void build_boot(void)
             BS.target[r * 60 + c] = v;
         }
     BS.sub = cap(BS.scr, W, "SOLO MINING TERMINAL", 'l', MX, 104);
-    BS.word = tight(txt(BS.scr, W, &font_g50, C_TEXT, "Bitaxe Deck", 'l', MX - 2, 158), 2);
+    BS.word = tight(txt(BS.scr, W, &font_g50, C_TEXT, "Satoshi Deck", 'l', MX - 2, 158), 2);
     BS.ver = txt(BS.scr, W, &font_m12, C_TEXT3, "", 'l', MX, 182);
     lv_label_set_text_fmt(BS.ver, "v.%s", deck_version());
     static const char *names[5] = {"DISPLAY", "WLAN", "BITAXE", "KURS", "BLOCK"};

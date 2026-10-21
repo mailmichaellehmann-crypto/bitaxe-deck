@@ -66,7 +66,7 @@ static cJSON *http_json(const char *url, int timeout_ms, char *err, int errlen)
         .user_data = &b,
         .timeout_ms = timeout_ms,
         .crt_bundle_attach = esp_crt_bundle_attach,
-        .user_agent = "bitaxe-deck/1.0",
+        .user_agent = "satoshi-deck/1.0",
         .buffer_size = 2048,
         .buffer_size_tx = 1024,
     };

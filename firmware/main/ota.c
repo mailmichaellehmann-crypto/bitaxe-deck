@@ -100,7 +100,7 @@ static void check_for_update(void)
         .user_data = &b,
         .timeout_ms = 15000,
         .crt_bundle_attach = esp_crt_bundle_attach,
-        .user_agent = "bitaxe-deck-ota",
+        .user_agent = "satoshi-deck-ota",
         .buffer_size = 4096,
         .buffer_size_tx = 1024,
     };
@@ -163,7 +163,7 @@ static void install(void)
         .url = url,
         .timeout_ms = 20000,
         .crt_bundle_attach = esp_crt_bundle_attach,
-        .user_agent = "bitaxe-deck-ota",
+        .user_agent = "satoshi-deck-ota",
         .buffer_size = 4096,
         .buffer_size_tx = 2048, // GitHub leitet auf lange Download-Adressen um
         .keep_alive_enable = true,

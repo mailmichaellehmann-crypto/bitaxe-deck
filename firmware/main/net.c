@@ -38,7 +38,7 @@ static char s_scan_html[2048] = "";
 // Pixel-Mosaik oben, Akzent Pink #FFD4D4. Keine externen Schriften (läuft auch im Setup-WLAN).
 static const char *PAGE_HEAD =
     "<!doctype html><html lang=de><head><meta charset=utf-8>"
-    "<meta name=viewport content='width=device-width,initial-scale=1'><title>Bitaxe Deck</title><style>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'><title>Satoshi Deck</title><style>"
     ":root{--fg:#ececec;--mut:#9a9a9a;--dim:#5e5e5e;--line:#262626;--pink:#ffd4d4;"
     "--sans:ui-sans-serif,-apple-system,'Helvetica Neue',Inter,Arial,sans-serif;"
     "--mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace}"
@@ -87,7 +87,7 @@ static esp_err_t root_get(httpd_req_t *req)
     default: snprintf(ota_line, sizeof(ota_line), "noch nicht geprüft"); break;
     }
     snprintf(html, 12288,
-             "%s<h1>Bitaxe Deck</h1><p>Einstellungen für dein Display. <span class=acc>Speichern startet es neu.</span></p>"
+             "%s<h1>Satoshi Deck</h1><p>Einstellungen für dein Display. <span class=acc>Speichern startet es neu.</span></p>"
              "<form method=post action=/save>"
              "<div class=sec>Verbindung</div>"
              "<label>WLAN-Name</label><input name=ssid list=nets value='%s' required maxlength=32 autocomplete=off>"
@@ -316,7 +316,7 @@ void net_init(void)
     esp_event_loop_create_default();
     s_sta = esp_netif_create_default_wifi_sta();
     s_ap = esp_netif_create_default_wifi_ap();
-    esp_netif_set_hostname(s_sta, "bitaxe-deck");
+    esp_netif_set_hostname(s_sta, "satoshi-deck");
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);

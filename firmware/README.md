@@ -1,6 +1,6 @@
-# Bitaxe Deck – Firmware für das WT32-SC01 Plus
+# Satoshi Deck – Firmware für das WT32-SC01 Plus
 
-Das Bitaxe-Deck-Dashboard als eigenständige Firmware für das **Smart Panlee / WT32-SC01 Plus**
+Das Satoshi-Deck-Dashboard als eigenständige Firmware für das **Smart Panlee / WT32-SC01 Plus**
 (Aufdruck ZX3D50CE08S-V16, ESP32-S3, 3,5" IPS 480 × 320, ST7796 über 8-Bit-MCU8080, Touch FT6336U).
 Das Display holt sich die Daten selbst über WLAN, ein Rechner muss dafür nicht laufen.
 
@@ -33,7 +33,7 @@ aber nicht erreichbar, steht dort **OFFLINE** in Rot, mit dem Grund; auch dann l
 ## Boot-Screen
 
 Nach jedem Start zeigt das Display etwa 10 Sekunden lang einen Boot-Screen: Pixel-Mosaik in einer
-diagonalen Welle, Schriftzug „Bitaxe Deck“ und der echte Startvorgang (Display, WLAN, Bitaxe, Kurs,
+diagonalen Welle, Schriftzug „Satoshi Deck“ und der echte Startvorgang (Display, WLAN, Bitaxe, Kurs,
 Block). Ein Tippen überspringt ihn.
 
 ## Share-Lotterie
@@ -64,7 +64,7 @@ Im Browser lässt sich außerdem die **Chart-Fläche** wählen: Punkte (Standard
 ## Einrichtung (einmalig)
 
 1. Board per USB-C mit Strom versorgen. Ohne WLAN öffnet sich die Konfiguration.
-2. QR-Code mit dem Handy scannen (verbindet direkt mit dem WLAN **`BitaxeDeck-Setup`**) oder von Hand verbinden, Passwort **`satoshi21`**.
+2. QR-Code mit dem Handy scannen (verbindet direkt mit dem WLAN **`SatoshiDeck-Setup`**) oder von Hand verbinden, Passwort **`satoshi21`**.
 3. Im Browser **http://192.168.4.1** öffnen.
 4. Heim-WLAN (2,4 GHz), WLAN-Passwort und die **IP-Adresse deines Bitaxe** (z. B. `192.168.1.42`) eintragen → *Speichern & neu starten*.
 
@@ -95,7 +95,7 @@ idf.py -p /dev/cu.usbmodem1101 flash monitor
 
 Falls sich das Board nicht flashen lässt („No serial data received“): USB-Kabel kurz ab- und wieder anstecken, dann erneut flashen.
 
-**Display steht auf dem Kopf?** `idf.py menuconfig` → *Bitaxe Deck* → *Display um 180° drehen*, dann neu flashen. Der Touch dreht sich mit.
+**Display steht auf dem Kopf?** `idf.py menuconfig` → *Satoshi Deck* → *Display um 180° drehen*, dann neu flashen. Der Touch dreht sich mit.
 
 ## Dateien
 
@@ -113,6 +113,6 @@ Touch SDA 6 · SCL 5 · INT 7.
 
 ## Messen und Screenshots
 
-Für Entwicklung: `idf.py menuconfig` → *Bitaxe Deck*
+Für Entwicklung: `idf.py menuconfig` → *Satoshi Deck*
 - *Bildrate im Log ausgeben* + *Automatisch durch die Karten blättern*: Renderzeit pro Karte im Log
 - *Screenshots aller Karten über USB ausgeben*: danach `python3 tools/snapshots.py /dev/cu.usbmodem1101 screenshots` (mit der Python-Umgebung von ESP-IDF, braucht `pyserial`)

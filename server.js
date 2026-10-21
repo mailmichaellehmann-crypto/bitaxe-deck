@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bitaxe Deck – lokaler Server
+// Satoshi Deck – lokaler Server
 // - liefert das Dashboard (./public) aus
 // - Proxy für die AxeOS-API des Bitaxe (umgeht CORS), nur zu privaten IPs im LAN
 // - Proxy + Cache für CoinGecko / mempool.space (schont Rate-Limits)
@@ -99,7 +99,7 @@ async function proxyExternal(res, name, rest, search) {
   }
   try {
     const r = await fetch(up.base + rest + search, {
-      headers: { accept: 'application/json', 'user-agent': 'bitaxe-deck/1.0' },
+      headers: { accept: 'application/json', 'user-agent': 'satoshi-deck/1.0' },
       signal: AbortSignal.timeout(10_000),
     });
     const body = await r.text();
@@ -140,6 +140,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`\n  ⛏  Bitaxe Deck läuft:  http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}\n`);
+  console.log(`\n  ⛏  Satoshi Deck läuft:  http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}\n`);
   if (process.env.BITAXE_IP) console.log(`  Standard-Bitaxe: ${process.env.BITAXE_IP}`);
 });

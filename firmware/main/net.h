@@ -1,7 +1,7 @@
 #pragma once
 #include <stdbool.h>
 
-#define DECK_AP_SSID "BitaxeDeck-Setup"
+#define DECK_AP_SSID "SatoshiDeck-Setup"
 #define DECK_AP_PASS "satoshi21"
 
 typedef enum {

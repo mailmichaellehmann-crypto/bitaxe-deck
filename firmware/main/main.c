@@ -1,4 +1,4 @@
-// Bitaxe Deck – Bitcoin- & Bitaxe-Dashboard für das WT32-SC01 Plus (ESP32-S3, 480x320)
+// Satoshi Deck – Bitcoin- & Bitaxe-Dashboard für das WT32-SC01 Plus (ESP32-S3, 480x320)
 #include "board.h"
 #include "data.h"
 #include "esp_heap_caps.h"
@@ -33,6 +33,6 @@ void app_main(void)
     board_set_brightness(g_settings.brightness);
 
     net_init();
-    ESP_LOGI("main", "Bitaxe Deck gestartet, freier interner RAM %u, PSRAM %u",
+    ESP_LOGI("main", "Satoshi Deck gestartet, freier interner RAM %u, PSRAM %u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }

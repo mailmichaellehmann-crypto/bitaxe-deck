@@ -1,4 +1,4 @@
-// Bitaxe Deck – Frontend
+// Satoshi Deck – Frontend
 // Datenquellen laufen über den lokalen Server (server.js):
 //   /ext/coingecko/...  /ext/mempool/...  (Cache)   /bitaxe/system/info?host=IP  (CORS-Proxy)
 
@@ -334,7 +334,7 @@ async function loadPrice() {
   tween($('price-usd'), state.usd, (v) => fmtUsd(v), { flash: true });
   $('price-eur').textContent = fmtEur(state.eur, 0);
   setChg($('price-chg'), state.chg24);
-  document.title = `${fmtUsd(state.usd)} · Bitaxe Deck`;
+  document.title = `${fmtUsd(state.usd)} · Satoshi Deck`;
   renderConverterFromSats();
   renderCalcs();
   stamp();
