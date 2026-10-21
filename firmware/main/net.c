@@ -97,6 +97,11 @@ static esp_err_t root_get(httpd_req_t *req)
     for (int i = 0; i < DECK_CARDS; i++)
         cl += snprintf(cards + cl, sizeof(cards) - cl, "<label><input type=checkbox name=c%d value=1%s>%s</label>", i,
                        (g_settings.card_mask >> i) & 1 ? " checked" : "", DECK_CARD_NAMES[i]);
+    char ncol[400];
+    int nl = 0;
+    for (int i = 0; i <= NIGHT_COLORS; i++)
+        nl += snprintf(ncol + nl, sizeof(ncol) - nl, "<option value=%d%s>%s</option>", i,
+                       g_settings.night_color == i ? " selected" : "", NIGHT_COLOR_NAMES[i]);
     char ct[16];
     float c = g_settings.kwh_price * 100.0f;
     snprintf(ct, sizeof(ct), c == (int)c ? "%.0f" : "%.1f", c);
@@ -115,6 +120,7 @@ static esp_err_t root_get(httpd_req_t *req)
              "<div class=sec>Anzeige</div>"
              "<div class=row><div style='flex:1'><label>Nachtmodus ab</label><input name=n_from value='%d' inputmode=numeric></div>"
              "<div style='flex:1'><label>bis (Uhr)</label><input name=n_to value='%d' inputmode=numeric></div></div>"
+             "<label>Farbe im Nachtmodus</label><select name=ncol>%s</select>"
              "<label>Chart-Fläche</label><select name=cstyle>"
              "<option value=0 %s>Punkte</option><option value=1 %s>Ohne Verlauf</option><option value=2 %s>Pixel</option></select>"
              "<label>Automatische Updates</label><select name=aupd>"
@@ -134,7 +140,7 @@ static esp_err_t root_get(httpd_req_t *req)
              "</main></body></html>",
              PAGE_HEAD, g_settings.wifi_ssid, s_scan_html,
              g_settings.wifi_pass[0] ? "unverändert lassen" : "", g_settings.bitaxe_host[0],
-             settings_cur(), g_settings.alarm_hi, settings_cur(), g_settings.alarm_lo, g_settings.night_from, g_settings.night_to,
+             settings_cur(), g_settings.alarm_hi, settings_cur(), g_settings.alarm_lo, g_settings.night_from, g_settings.night_to, ncol,
              g_settings.chart_style == 0 ? "selected" : "", g_settings.chart_style == 1 ? "selected" : "",
              g_settings.chart_style == 2 ? "selected" : "",
              g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, cards,
@@ -197,6 +203,7 @@ static esp_err_t save_post(httpd_req_t *req)
     if (form_field(body, "al_lo", v, sizeof(v))) g_settings.alarm_lo = strtof(v, NULL);
     if (form_field(body, "n_from", v, sizeof(v))) { int h = atoi(v); if (h >= 0 && h < 24) g_settings.night_from = h; }
     if (form_field(body, "n_to", v, sizeof(v))) { int h = atoi(v); if (h >= 0 && h < 24) g_settings.night_to = h; }
+    if (form_field(body, "ncol", v, sizeof(v))) { int c = atoi(v); if (c >= 0 && c <= NIGHT_COLORS) g_settings.night_color = c; }
     if (form_field(body, "aupd", v, sizeof(v))) g_settings.auto_update = atoi(v) != 0;
     if (form_field(body, "cstyle", v, sizeof(v))) { int c = atoi(v); if (c >= 0 && c <= 2) g_settings.chart_style = c; }
     if (form_field(body, "cards", v, sizeof(v))) { // nicht angehakte Kästchen werden nicht mitgeschickt

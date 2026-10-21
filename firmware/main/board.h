@@ -10,3 +10,6 @@ esp_err_t board_init(void);      // Display, Touch, LVGL, LVGL-Task
 bool board_lvgl_lock(int timeout_ms);
 void board_lvgl_unlock(void);
 void board_set_brightness(int pct); // 0..100 %
+// Nachtfarbe: das ganze Bild wird beim Übertragen in Helligkeitsstufen einer Farbe umgerechnet
+void board_set_tint(bool on, uint32_t rgb); // rgb = 0xRRGGBB
+void board_tint_buf(void *px, int n);       // n Pixel (RGB565) mit der aktuellen Farbe umrechnen

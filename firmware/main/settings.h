@@ -7,6 +7,9 @@
 #define DECK_CARDS 12
 #define DECK_CARDS_ALL ((1u << DECK_CARDS) - 1)
 extern const char *const DECK_CARD_NAMES[DECK_CARDS];
+#define NIGHT_COLORS 6 // Farbtöne; danach als letzte Wahl „Originalfarben“
+extern const char *const NIGHT_COLOR_NAMES[NIGHT_COLORS + 1];
+extern const uint32_t NIGHT_COLOR_RGB[NIGHT_COLORS];
 
 typedef struct {
     char wifi_ssid[33];
@@ -21,6 +24,7 @@ typedef struct {
     bool night_on;       // Nachtmodus
     uint8_t night_from;  // Stunde, ab der gedimmt wird
     uint8_t night_to;    // Stunde, bis zu der gedimmt wird
+    uint8_t night_color; // Farbe im Nachtmodus: Index in NIGHT_COLOR_NAMES (NIGHT_COLORS = Originalfarben)
     bool block_note;     // Hinweis bei neuem Block
     uint8_t chart_range; // 0 = 24h, 1 = 7T, 2 = 30T, 3 = 1J
     uint8_t brightness;  // 5..100 %

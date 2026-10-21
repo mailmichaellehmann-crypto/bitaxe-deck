@@ -76,6 +76,18 @@ Blöcke bis zum Halving, darunter Zielblock, geschätztes Datum (aus der mittler
 mempool.space) und die Tage bis dahin, oben rechts die Blockbelohnung vorher → nachher. Hinter
 den Beschriftungen bleiben die Zellen ausgespart, damit alles auch über dem Sand lesbar ist.
 
+## Nachtmodus
+
+Im eingestellten Zeitfenster schaltet das Display nach 30 Sekunden ohne Berührung auf schwache
+Beleuchtung (12 %) und zeigt alles in einer sanften Farbe. Dafür wird jedes Pixel kurz vor dem
+Übertragen ans Display in eine Helligkeitsstufe der gewählten Farbe umgerechnet – das gilt für alle
+Karten, Animationen und Hinweise. Eine Berührung bringt Helligkeit und Originalfarben zurück.
+
+Farbe auf der Browser-Seite unter „Farbe im Nachtmodus“: **Bernstein** (Standard, `#FFB000`),
+**Tiefrot** (`#FF2A1A`, schont die Nachtsicht am meisten), **Kerzenlicht** (`#FFB46B`),
+**Rosé** (`#F2A6A6`), **Phosphor** (`#4CFF7A`), **Eisblau** (`#9CC8FF`) oder **Originalfarben**
+(nur gedimmt).
+
 ## Share-Lotterie
 
 Das Display liest den Log-Stream des Bitaxe (`ws://<IP>/api/ws`) und wertet jede Zeile
@@ -93,7 +105,7 @@ Netzwerk-Difficulty, also ein Block. Ohne erreichbaren Bitaxe wird die Verteilun
 - **Währung** EUR/USD (Preis, Chart, Gebühren, Sats-Umrechnung)
 - **Preisalarm** ein/aus – Grenzen oben/unten auf der Browser-Seite
 - **Seitenwechsel**: blättert automatisch weiter, wenn niemand das Display berührt (AUS, 5 s … 5 min)
-- **Nightmode**: dimmt im Zeitfenster (Standard 22–7 Uhr, im Browser änderbar); Berührung weckt
+- **Nachtmodus**: im Zeitfenster (Standard 22–7 Uhr) nach 30 s ohne Berührung schwache Beleuchtung und alles in einer sanften Farbe (siehe unten); Berührung weckt
 - **Neuer Block**: springt bei einem neuen Block zur Karte „Neuer Block“ mit Animation (siehe oben)
 - **Chart**: Zeitraum 24h / 7T / 30T / 1J
 - unten: Kartenmenü (Raster-Symbol), Helligkeit, Schließen (✕)

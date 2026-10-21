@@ -10,6 +10,7 @@ deck_settings_t g_settings = {
     .rotate_s = 0,
     .night_from = 22,
     .night_to = 7,
+    .night_color = 0,
     .block_note = true,
     .brightness = 80,
     .chart_style = 0,
@@ -19,6 +20,10 @@ deck_settings_t g_settings = {
 
 const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",    "USD / EUR", "Chart",      "Block", "Neuer Block", "Halving",
                                                  "Gebühren", "Difficulty", "Uhr",       "Bitaxe", "Kosten",     "Lotterie"};
+
+const char *const NIGHT_COLOR_NAMES[NIGHT_COLORS + 1] = {"Bernstein", "Tiefrot", "Kerzenlicht", "Rosé",
+                                                         "Phosphor",  "Eisblau", "Originalfarben"};
+const uint32_t NIGHT_COLOR_RGB[NIGHT_COLORS] = {0xFFB000, 0xFF2A1A, 0xFFB46B, 0xF2A6A6, 0x4CFF7A, 0x9CC8FF};
 
 // neue Karte an Platz pos einfügen (eingeschaltet), die folgenden rücken auf
 static uint16_t card_insert(uint16_t r, int pos)
@@ -74,6 +79,7 @@ void settings_load(void)
     b = g_settings.auto_update; get_u8(h, "aupd", &b); g_settings.auto_update = b;
     get_u8(h, "n_from", &g_settings.night_from);
     get_u8(h, "n_to", &g_settings.night_to);
+    get_u8(h, "ncol", &g_settings.night_color);
     get_u8(h, "range", &g_settings.chart_range);
     get_u8(h, "bright", &g_settings.brightness);
     get_u8(h, "cstyle", &g_settings.chart_style);
@@ -93,6 +99,7 @@ void settings_load(void)
     nvs_close(h);
     if (g_settings.chart_range > 3) g_settings.chart_range = 0;
     if (g_settings.chart_style > 2) g_settings.chart_style = 0;
+    if (g_settings.night_color > NIGHT_COLORS) g_settings.night_color = 0;
     if (g_settings.brightness < 5 || g_settings.brightness > 100) g_settings.brightness = 80;
 }
 
@@ -113,6 +120,7 @@ void settings_save(void)
     nvs_set_u8(h, "aupd", g_settings.auto_update);
     nvs_set_u8(h, "n_from", g_settings.night_from);
     nvs_set_u8(h, "n_to", g_settings.night_to);
+    nvs_set_u8(h, "ncol", g_settings.night_color);
     nvs_set_u8(h, "range", g_settings.chart_range);
     nvs_set_u8(h, "bright", g_settings.brightness);
     nvs_set_u8(h, "cstyle", g_settings.chart_style);

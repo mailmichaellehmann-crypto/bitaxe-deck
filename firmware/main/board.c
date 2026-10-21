@@ -60,8 +60,38 @@ static bool on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_e
     return false;
 }
 
+// Nachtfarbe: Helligkeit (0 … 63) -> Farbe als RGB565 mit getauschten Bytes (LV_COLOR_16_SWAP)
+static volatile bool s_tint_on;
+static uint16_t s_tint_lut[64];
+
+void board_set_tint(bool on, uint32_t rgb)
+{
+    if (on) {
+        int R = (rgb >> 16) & 0xFF, G = (rgb >> 8) & 0xFF, B = rgb & 0xFF;
+        for (int i = 0; i < 64; i++) {
+            // je Kanal runden, sonst kippen sehr dunkle Stufen ins Grüne (Grün hat 6 Bit, Rot/Blau 5)
+            int r = (R * i * 31 + 63 * 255 / 2) / (63 * 255), g = (G * i * 63 + 63 * 255 / 2) / (63 * 255),
+                b = (B * i * 31 + 63 * 255 / 2) / (63 * 255);
+            uint16_t c = (uint16_t)((r << 11) | (g << 5) | b);
+            s_tint_lut[i] = (uint16_t)((c >> 8) | (c << 8));
+        }
+    }
+    s_tint_on = on;
+}
+
+void board_tint_buf(void *px, int n)
+{
+    uint16_t *p = px;
+    for (int i = 0; i < n; i++) {
+        uint16_t v = (uint16_t)((p[i] >> 8) | (p[i] << 8));
+        int r = v >> 11, g = (v >> 5) & 63, b = v & 31;
+        p[i] = s_tint_lut[(r * 2 * 77 + g * 150 + b * 2 * 29) >> 8]; // Helligkeit wie das Auge (Rec. 601)
+    }
+}
+
 static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
 {
+    if (s_tint_on) board_tint_buf(color_map, (area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1));
     esp_lcd_panel_draw_bitmap(s_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_map);
 }
 

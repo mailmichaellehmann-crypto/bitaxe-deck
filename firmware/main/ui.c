@@ -54,6 +54,7 @@ LV_FONT_DECLARE(font_m20);
 #define H LCD_V_RES
 #define N_TILES DECK_CARDS
 #define CARD_NEWBLOCK 4 // Karte „Neuer Block“
+#define NIGHT_BRIGHT 12 // Beleuchtung im Nachtmodus (%), schwach, aber nicht aus
 #define MX 20 // Seitenrand
 
 // ------------------------------------------------------------------ Formatierung (deutsch)
@@ -2184,17 +2185,26 @@ static void auto_tick(void)
         last_rot = now;
         car_go(1);
     }
-    static int cur = -1;
+    static int cur = -1, tint = -1;
     int want = g_settings.brightness;
+    bool night = false;
     if (g_settings.night_on && net_time_valid() && idle > 30000 && !s_toast_until) {
         time_t t = time(NULL);
         struct tm tm;
         localtime_r(&t, &tm);
         int f = g_settings.night_from, to = g_settings.night_to, h = tm.tm_hour;
-        bool night = f <= to ? (h >= f && h < to) : (h >= f || h < to);
-        if (night) want = 3;
+        night = f <= to ? (h >= f && h < to) : (h >= f || h < to);
     }
+    // Nachtmodus: schwache Beleuchtung, alles in einer sanften Farbe; Berührung weckt
+    int want_tint = night && g_settings.night_color < NIGHT_COLORS ? g_settings.night_color : -1;
+    if (night) want = NIGHT_BRIGHT;
     if (want != cur) { cur = want; board_set_brightness(want); }
+    if (want_tint != tint) {
+        tint = want_tint;
+        board_set_tint(tint >= 0, tint >= 0 ? NIGHT_COLOR_RGB[tint] : 0);
+        lv_obj_invalidate(lv_scr_act());
+        lv_obj_invalidate(lv_layer_top());
+    }
 }
 
 static void ui_timer_cb(lv_timer_t *t)
@@ -2235,7 +2245,7 @@ static void bench_cb(lv_timer_t *t)
     static lv_img_dsc_t *snap;
     static const int ba_at[4] = {700, 1250, 1900, 3500}; // Block-Animation: Aufnahmezeitpunkte (ms)
     ticks++;
-    if (idx >= N_TILES + 2 + 4) return;
+    if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS) return;
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
@@ -2247,7 +2257,13 @@ static void bench_cb(lv_timer_t *t)
     }
     if (row < 0) {
         int k = idx - (N_TILES + 2);
-        if (k >= 0) { // Block-Animation jeweils neu starten und zum Zeitpunkt k aufnehmen
+        if (k >= 4) { // Nachtfarben: Preiskarte, umgerechnet wie beim Übertragen ans Display
+            if (wait++ == 0) {
+                car_jump(0, false);
+                return;
+            }
+            if (wait < 20) return;
+        } else if (k >= 0) { // Block-Animation jeweils neu starten und zum Zeitpunkt k aufnehmen
             static int64_t t0;
             int64_t now = esp_timer_get_time() / 1000;
             if (wait++ == 0) {
@@ -2263,9 +2279,14 @@ static void bench_cb(lv_timer_t *t)
             }
             if (now - t0 < ba_at[k]) return;
         } else if (++wait < 20) return;
-        sid = k >= 0 ? 30 + k : idx;
+        sid = k >= 4 ? 50 + k - 4 : k >= 0 ? 30 + k : idx;
         snap = lv_snapshot_take(lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
         if (!snap) { printf("SNAPERR %d\n", sid); idx++; wait = 0; return; }
+        if (k >= 4) {
+            board_set_tint(true, NIGHT_COLOR_RGB[k - 4]);
+            board_tint_buf((void *)snap->data, snap->header.w * snap->header.h);
+            board_set_tint(false, 0);
+        }
         printf("\nSNAP %d %d %d\n", sid, (int)snap->header.w, (int)snap->header.h);
         row = 0;
     }
