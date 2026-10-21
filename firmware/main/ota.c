@@ -40,6 +40,7 @@ static volatile bool s_req_check, s_req_install;
 
 void ota_get(ota_status_t *out)
 {
+    if (!s_mtx) { memset(out, 0, sizeof(*out)); return; } // noch nicht gestartet
     xSemaphoreTake(s_mtx, portMAX_DELAY);
     *out = s_st;
     xSemaphoreGive(s_mtx);

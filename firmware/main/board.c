@@ -213,6 +213,7 @@ static void lvgl_task(void *arg)
 
 bool board_lvgl_lock(int timeout_ms)
 {
+    if (!s_lvgl_mutex) return false; // Display noch nicht initialisiert
     TickType_t t = timeout_ms < 0 ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
     return xSemaphoreTakeRecursive(s_lvgl_mutex, t) == pdTRUE;
 }

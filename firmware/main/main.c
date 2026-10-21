@@ -22,6 +22,7 @@ void app_main(void)
     settings_load();
     data_start(); // vor der Oberfläche: legt Sperre und Demo-Verlauf an
     shares_start();
+    ota_start(); // vor der Oberfläche: legt die Sperre für den Update-Status an
 
     ESP_ERROR_CHECK(board_init());
     if (board_lvgl_lock(-1)) {
@@ -32,7 +33,6 @@ void app_main(void)
     board_set_brightness(g_settings.brightness);
 
     net_init();
-    ota_start();
     ESP_LOGI("main", "Bitaxe Deck gestartet, freier interner RAM %u, PSRAM %u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
