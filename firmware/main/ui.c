@@ -1248,9 +1248,34 @@ static void check_price_alarm(double px)
 // ------------------------------------------------------------------ Einstellungen & Kartenmenü
 
 static lv_obj_t *s_cfg, *s_menu, *s_qr, *s_cfg_l1, *s_cfg_l2, *s_slider[2], *s_menu_tile[9];
-static lv_obj_t *s_rot_val, *s_range_val, *s_cfg_ver, *s_upd_pill, *s_upd_lbl;
+static lv_obj_t *s_rot_val, *s_range_val, *s_upd_pill, *s_upd_lbl;
 
-static void upd_cb(lv_event_t *e) { ota_install_now(); }
+// Update-Knopf oben rechts: „v1.4.2 · PRÜFEN“ sucht sofort, „UPDATE x →“ installiert
+static int s_upd_ask;                  // 0 = nichts, 1 = am Gerät angefragt, 2 = Suche läuft
+static int64_t s_upd_t0, s_upd_until;  // Zeitpunkt der Anfrage / „aktuell“ zeigen bis (ms)
+static void ota_tick(void);
+
+static void upd_cb(lv_event_t *e)
+{
+    ota_status_t o;
+    ota_get(&o);
+    if (o.state == OTA_AVAILABLE) { ota_install_now(); return; }
+    if (o.state == OTA_CHECKING || o.state == OTA_INSTALLING || s_upd_ask) return;
+    if (net_state() != NET_CONNECTED) { toast_show("KEIN WLAN", "Prüfen geht nur online", 5000); return; }
+    s_upd_ask = 1;
+    s_upd_t0 = esp_timer_get_time() / 1000;
+    s_upd_until = 0;
+    ota_check_now();
+    ota_tick(); // sofort „SUCHE …“ zeigen
+}
+
+static void upd_pill_set(const char *s, bool accent)
+{
+    if (strcmp(lv_label_get_text(s_upd_lbl), s)) lv_label_set_text(s_upd_lbl, s);
+    lv_obj_set_style_bg_color(s_upd_pill, accent ? C_PINK : C_BG, 0);
+    lv_obj_set_style_border_width(s_upd_pill, accent ? 0 : 1, 0);
+    lv_obj_set_style_text_color(s_upd_lbl, accent ? C_BG : C_TEXT, 0);
+}
 
 // Vollbild während der Installation eines Updates
 static struct { lv_obj_t *scr, *ver, *pct, *cells[55]; } U;
@@ -1276,19 +1301,35 @@ static void ota_tick(void)
     static char announced[24] = "";
     ota_status_t o;
     ota_get(&o);
+    int64_t now = esp_timer_get_time() / 1000;
+    char b[64];
+    // Prüfung am Gerät: Ergebnis abwarten und melden
+    if (s_upd_ask == 1 && o.state == OTA_CHECKING) s_upd_ask = 2;
+    if (s_upd_ask == 1 && now - s_upd_t0 > 20000) {
+        s_upd_ask = 0;
+        toast_show("UPDATE-PRÜFUNG", "Keine Antwort", 5000);
+    }
+    if (s_upd_ask == 2 && o.state != OTA_CHECKING) {
+        s_upd_ask = 0;
+        if (o.state == OTA_UPTODATE) s_upd_until = now + 5000;
+        else if (o.state == OTA_FAILED) toast_show("UPDATE-PRÜFUNG", o.error, 6000);
+    }
     if (o.state == OTA_AVAILABLE) {
-        lv_label_set_text_fmt(s_upd_lbl, "UPDATE %s →", o.latest);
-        lv_obj_clear_flag(s_upd_pill, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(s_cfg_ver, LV_OBJ_FLAG_HIDDEN);
+        snprintf(b, sizeof(b), "UPDATE %s →", o.latest);
+        upd_pill_set(b, true);
         if (strcmp(announced, o.latest) && !g_settings.auto_update) {
             strlcpy(announced, o.latest, sizeof(announced));
-            char b[64];
             snprintf(b, sizeof(b), "Version %s – in den Einstellungen", o.latest);
             toast_show("UPDATE VERFÜGBAR", b, 8000);
         }
-    } else if (o.state != OTA_INSTALLING) {
-        lv_obj_add_flag(s_upd_pill, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(s_cfg_ver, LV_OBJ_FLAG_HIDDEN);
+    } else if (s_upd_ask || o.state == OTA_CHECKING) {
+        upd_pill_set("SUCHE …", false);
+    } else if (now < s_upd_until) {
+        snprintf(b, sizeof(b), "v%s " LV_SYMBOL_OK " AKTUELL", deck_version());
+        upd_pill_set(b, false);
+    } else {
+        snprintf(b, sizeof(b), "v%s · PRÜFEN", deck_version());
+        upd_pill_set(b, false);
     }
     if (o.state == OTA_INSTALLING) {
         if (lv_obj_has_flag(U.scr, LV_OBJ_FLAG_HIDDEN)) {
@@ -1571,14 +1612,12 @@ static void build_overlays(void)
     s_qr = lv_qrcode_create(qb, 72, lv_color_black(), C_TEXT);
     lv_obj_center(s_qr);
     txt(s_cfg, W, &font_g26, C_TEXT, "Einstellungen", 'l', 120, 40);
-    s_cfg_ver = txt(s_cfg, W, &font_m12, C_TEXT3, "", 'r', W - MX, 28);
-    lv_label_set_text_fmt(s_cfg_ver, "v.%s", deck_version());
-    s_upd_pill = pill(s_cfg, W - MX - 150, 12, 150, 26, "", &s_upd_lbl);
-    lv_obj_set_style_bg_color(s_upd_pill, C_PINK, 0);
-    lv_obj_set_style_border_width(s_upd_pill, 0, 0);
-    lv_obj_set_style_text_color(s_upd_lbl, C_BG, 0);
+    lv_obj_t *pl;
+    s_upd_pill = pill(s_cfg, W - MX - 150, 12, 150, 26, "", &pl);
+    lv_obj_del(pl);
+    s_upd_lbl = txt(s_upd_pill, 150, &font_m12, C_TEXT, "", 'c', 75, 17);
+    lv_obj_set_style_text_letter_space(s_upd_lbl, 1, 0);
     lv_obj_add_event_cb(s_upd_pill, upd_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(s_upd_pill, LV_OBJ_FLAG_HIDDEN);
     s_cfg_l1 = txt(s_cfg, W, &font_m12, C_TEXT2, "", 'l', 120, 66);
     s_cfg_l2 = txt(s_cfg, W, &font_m14, C_PINK, "", 'l', 120, 88);
     static const int xs[3] = {MX, MX + 148, MX + 296};

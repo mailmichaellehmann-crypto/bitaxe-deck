@@ -53,6 +53,7 @@ Netzwerk-Difficulty, also ein Block. Ohne erreichbaren Bitaxe wird die Verteilun
 **Finger ca. 0,7 s auf eine Karte halten** öffnet die Konfiguration (auf dem Chart selbst öffnet langes Halten das Fadenkreuz – dort oben auf Preis oder Uhrzeit drücken):
 
 - QR-Code bzw. IP zur Einstellungsseite im Browser
+- oben rechts **Version · PRÜFEN**: sucht sofort nach Updates (zeigt „SUCHE …“, dann „✓ AKTUELL“ oder **UPDATE x →**, Tippen darauf installiert)
 - **Währung** EUR/USD (Preis, Chart, Gebühren, Sats-Umrechnung)
 - **Preisalarm** ein/aus – Grenzen oben/unten auf der Browser-Seite
 - **Seitenwechsel**: blättert automatisch weiter, wenn niemand das Display berührt (AUS, 5 s … 5 min)
@@ -88,7 +89,7 @@ Klappt die WLAN-Verbindung 25 Sekunden lang nicht, öffnet das Display das Setup
 - `main/ota.c` fragt alle 6 h `https://api.github.com/repos/<repo>/releases/latest` ab (Repo: `CONFIG_DECK_OTA_REPO`, im GitHub-Build automatisch gesetzt) und vergleicht mit `version.txt`.
 - Installation über `esp_https_ota` mit Zertifikatsprüfung; danach Neustart.
 - Rollback: Neue Firmware wird erst nach 60 s mit WLAN bestätigt, sonst startet der Bootloader die vorherige.
-- Am Gerät: rosa Knopf „UPDATE x.y.z →“ oben rechts in den Einstellungen. Im Browser: Abschnitt „Firmware“.
+- Am Gerät: Knopf oben rechts in den Einstellungen – „v… · PRÜFEN“ sucht sofort, bei einem Fund wird er zum rosa „UPDATE x.y.z →“ (installiert). Im Browser: Abschnitt „Firmware“.
 - Automatisch (Standard, im Browser abschaltbar): Installation, sobald 5 Minuten niemand das Display berührt hat.
 
 ## Bauen und flashen
