@@ -20,12 +20,13 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 2 | USD & EUR | beide Kurse mit 24h-Änderung |
 | 3 | Chart | Kursverlauf als Punktmatrix (oder als Pixel-Mosaik wie auf der Preiskarte), Hoch/Tief, letzter Wert in Pink; Tippen auf „24h“ wechselt zu 7T / 30T / 1J; Finger halten und ziehen zeigt Preis und Zeit |
 | 4 | Block | Blockhöhe, Alter und Pool des letzten Blocks, Blöcke bis zum Halving |
-| 5 | Blockzeit & Gebühren | Blockhöhe, Sats pro USD, Gebühren niedrig/mittel/hoch in sat/vB und $ |
-| 6 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
-| 7 | Uhr | Uhrzeit, Wochentag, Datum |
-| 8 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
-| 9 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt; Strompreis mit – / + direkt auf der Karte |
-| 10 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
+| 5 | Neuer Block | Kette der letzten fünf Blöcke als Pixel-Blöcke (der neueste pink), Blockhöhe groß, Pool, Transaktionen, Belohnung, Uhrzeit und Alter; bei einem neuen Block läuft die Animation |
+| 6 | Blockzeit & Gebühren | Blockhöhe, Sats pro USD, Gebühren niedrig/mittel/hoch in sat/vB und $ |
+| 7 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
+| 8 | Uhr | Uhrzeit, Wochentag, Datum |
+| 9 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
+| 10 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
+| 11 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
 
 Gestaltung im Stil von Strike (eigener Code): tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen,
 Geist Mono für Beschriftungen, feine Rahmen, Punktmatrix-Chart, Pixel-Mosaik als Kursverlauf.
@@ -45,8 +46,8 @@ und Chart, Blockdaten), mindestens etwa 5 Sekunden und höchstens 45 Sekunden. E
 
 Die Karte rechnet aus der aktuellen Leistung des Bitaxe (AxeOS-Wert `power`) die Kosten pro Tag,
 Monat (365/12 Tage) und Jahr hoch, jeweils mit den kWh dazu. Rechts oben steht der Strompreis
-(Standard **30 ct/kWh**), änderbar mit – / + auf der Karte (1 ct je Tipp) oder genau auf der
-Browser-Seite unter „Mining-Kosten“. Gerechnet wird in Euro, unabhängig von der Kurswährung;
+(Standard **30 ct/kWh**); einstellen lässt er sich auf der Browser-Seite unter „Mining-Kosten“.
+Gerechnet wird in Euro, unabhängig von der Kurswährung;
 auch die sats pro Tag beziehen sich auf den Euro-Kurs.
 
 Der **Stromzähler** summiert die gemessene Leistung, solange der Bitaxe echte Werte liefert (nicht im
@@ -56,10 +57,13 @@ zurücksetzen.
 
 ## Neuer Block
 
-Ist „Neuer Block“ eingeschaltet, erscheint bei jedem neuen Block für ein paar Sekunden eine Animation:
-Ein pinker Pixel-Block fällt in die Kette der letzten Blöcke, die Blockhöhe rollt wie ein Zählwerk
-auf den neuen Wert, darunter Pool, Transaktionen und Belohnung. Danach rückt die Kette einen Platz
-weiter. Ein Tippen schließt sie.
+Eigene Karte mit der Kette der letzten fünf Blöcke als Pixel-Blöcke; der neueste ist pink, rechts
+wartet ein freier Platz auf den nächsten. Darunter die Blockhöhe, Pool, Transaktionen und Belohnung,
+oben Uhrzeit und Alter („NEUER BLOCK“ in den ersten 10 Minuten, danach „LETZTER BLOCK“).
+
+Kommt ein Block, fällt ein pinker Pixel-Block auf den freien Platz, die Verbindung leuchtet auf,
+die Blockhöhe rollt wie ein Zählwerk auf den neuen Wert, danach rückt die Kette einen Platz weiter.
+Ist in den Einstellungen „Neuer Block“ eingeschaltet, springt das Display dafür zu dieser Karte.
 
 ## Share-Lotterie
 
@@ -79,7 +83,7 @@ Netzwerk-Difficulty, also ein Block. Ohne erreichbaren Bitaxe wird die Verteilun
 - **Preisalarm** ein/aus – Grenzen oben/unten auf der Browser-Seite
 - **Seitenwechsel**: blättert automatisch weiter, wenn niemand das Display berührt (AUS, 5 s … 5 min)
 - **Nightmode**: dimmt im Zeitfenster (Standard 22–7 Uhr, im Browser änderbar); Berührung weckt
-- **Neuer Block**: Animation mit Blockhöhe, Pool und Transaktionen (siehe oben)
+- **Neuer Block**: springt bei einem neuen Block zur Karte „Neuer Block“ mit Animation (siehe oben)
 - **Chart**: Zeitraum 24h / 7T / 30T / 1J
 - unten: Kartenmenü (Raster-Symbol), Helligkeit, Schließen (✕)
 

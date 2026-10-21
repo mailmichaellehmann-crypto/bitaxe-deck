@@ -53,6 +53,7 @@ LV_FONT_DECLARE(font_m20);
 #define W LCD_H_RES
 #define H LCD_V_RES
 #define N_TILES DECK_CARDS
+#define CARD_NEWBLOCK 4 // Karte „Neuer Block“
 #define MX 20 // Seitenrand
 
 // ------------------------------------------------------------------ Formatierung (deutsch)
@@ -806,8 +807,6 @@ static struct {
     bool have;
 } KS;
 
-static lv_obj_t *round_btn(lv_obj_t *p, int x, int y, int d, const char *s, const lv_font_t *f);
-
 static void cost_render(void)
 {
     char b[64], n[24];
@@ -859,19 +858,6 @@ static void cost_render(void)
     lv_label_set_text(KS.e_title[1], b);
 }
 
-// Strompreis am Gerät: ± 1 ct
-static void cost_price_cb(lv_event_t *e)
-{
-    int dir = (int)(intptr_t)lv_event_get_user_data(e);
-    double ct = g_settings.kwh_price * 100.0;
-    ct = dir > 0 ? floor(ct + 0.05) + 1 : ceil(ct - 0.05) - 1;
-    if (ct < 0) ct = 0;
-    if (ct > 200) ct = 200;
-    g_settings.kwh_price = (float)(ct / 100.0);
-    settings_save();
-    cost_render();
-}
-
 static void build_cost(lv_obj_t *t)
 {
     cap(t, W, "MINING-KOSTEN", 'l', MX, 30);
@@ -881,13 +867,9 @@ static void build_cost(lv_obj_t *t)
     breathe(KS.dot);
     KS.watt = tight(txt(t, W, &font_g96, C_TEXT, "–", 'l', MX - 5, 132), 4);
     KS.unit = txt(t, W, &font_m20, C_TEXT2, "W", 'l', 0, 132);
-    // Strompreis mit – / +
+    // Strompreis (einstellbar auf der Browser-Seite)
     cap(t, W, "STROMPREIS", 'r', W - MX, 66);
-    lv_obj_t *m = round_btn(t, 300, 78, 26, "–", &font_m20);
-    lv_obj_add_event_cb(m, cost_price_cb, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
-    lv_obj_t *pl = round_btn(t, W - MX - 26, 78, 26, "+", &font_m20);
-    lv_obj_add_event_cb(pl, cost_price_cb, LV_EVENT_CLICKED, (void *)(intptr_t)1);
-    KS.price = txt(t, W, &font_m14, C_TEXT, "", 'c', (326 + W - MX - 26) / 2, 96);
+    KS.price = tight(txt(t, W, &font_g26, C_TEXT, "", 'r', W - MX, 100), 1);
     KS.ticket = txt(t, W, &font_m14, C_TEXT2, "", 'r', W - MX, 132);
     lv_label_set_recolor(KS.ticket, true);
     static const char *tn[3] = {"PRO TAG", "PRO MONAT", "PRO JAHR"};
@@ -1074,6 +1056,8 @@ static uint32_t v_price, v_chart, v_net, v_miner, v_cost, v_cost_p;
 static void check_price_alarm(double px);
 static void toast_show(const char *title, const char *msg, int ms);
 static void block_anim_show(uint32_t old_h, uint32_t new_h, const char *pool, uint32_t tx, double reward, int64_t ts);
+static void block_card_set(uint32_t h, const char *pool, uint32_t tx, double reward, int64_t ts);
+static void block_card_age(void);
 
 static void set_change(lv_obj_t *l, double pct, const char *suffix)
 {
@@ -1194,11 +1178,19 @@ static void update_network(deck_data_t *d)
     if (!d->net_ok || d->net_ver == v_net) return;
     v_net = d->net_ver;
     char b[96], n[24], n2[24];
-    static uint32_t last_height = 0;
-    if (last_height && d->height > last_height && g_settings.block_note && d->blocks_n)
-        block_anim_show(last_height, d->height, d->blocks[0].pool, d->blocks[0].tx_count, d->blocks[0].reward_btc,
-                        d->blocks[0].timestamp);
-    last_height = d->height;
+    static uint32_t card_h = 0; // zuletzt auf der Karte „Neuer Block“ gezeigte Höhe
+    if (d->blocks_n && d->height != card_h) {
+        const block_info_t *bi = &d->blocks[0];
+        if (card_h && d->height > card_h) {
+            block_anim_show(card_h, d->height, bi->pool, bi->tx_count, bi->reward_btc, bi->timestamp);
+            // „Neuer Block“ eingeschaltet: zur Karte springen und das Display wecken
+            if (g_settings.block_note && card_on(CARD_NEWBLOCK) && !s_booting && !SW.down && !K.scrub) {
+                car_jump(CARD_NEWBLOCK, true);
+                lv_disp_trig_activity(NULL);
+            }
+        } else block_card_set(d->height, bi->pool, bi->tx_count, bi->reward_btc, bi->timestamp);
+        card_h = d->height;
+    }
     fmt_plain(b, sizeof(b), d->height);
     lv_label_set_text(D.height, b);
     lv_label_set_text(E.height, b);
@@ -1236,6 +1228,7 @@ static void update_age(deck_data_t *d)
     if (s < 60) snprintf(b, sizeof(b), "Letzter Block gerade eben · %s", d->blocks[0].pool);
     else snprintf(b, sizeof(b), "Letzter Block vor %d Min · %s", (int)(s / 60), d->blocks[0].pool);
     if (strcmp(lv_label_get_text(D.age), b)) lv_label_set_text(D.age, b);
+    block_card_age();
 }
 
 static void update_miner(deck_data_t *d)
@@ -1356,9 +1349,10 @@ static void toast_tick(void)
     lv_obj_set_style_border_opa(s_toast, (now / 500) % 2 ? LV_OPA_COVER : LV_OPA_30, 0);
 }
 
-// ------------------------------------------------------------------ Neuer Block
-// Ein pinker Pixel-Block fällt in die Kette der letzten Blöcke, die Blockhöhe rollt wie ein
-// Zählwerk auf den neuen Wert, danach rückt die Kette einen Platz weiter.
+// ------------------------------------------------------------------ 4 Neuer Block (eigene Karte)
+// Kette der letzten Blöcke als Pixel-Blöcke, der neueste in Pink, rechts ein freier Platz für den
+// nächsten. Kommt ein Block, fällt er auf den freien Platz, die Höhe rollt wie ein Zählwerk hoch,
+// dann rückt die Kette einen Platz weiter.
 #define BA_N 6                            // Plätze in der Kette (der letzte ist der nächste Block)
 #define BA_SZ 48                          // Kantenlänge eines Blocks: 6 × 6 Zellen à 8 px
 #define BA_PITCH 72
@@ -1367,9 +1361,10 @@ static void toast_tick(void)
 #define BA_NUM_Y 236                      // Grundlinie der Blockhöhe
 #define BA_LS 3                           // engere Laufweite der großen Zahl
 static struct {
-    lv_obj_t *scr, *time, *info, *pre, *num_box, *old_n, *new_n, *link[BA_N - 1];
+    lv_obj_t *title, *time, *info, *pre, *num_box, *old_n, *new_n, *link[BA_N - 1];
     lv_obj_t *box[BA_N], *lbl[BA_N];      // Container: Block und Höhe darunter
     canvas_t cv[BA_N];
+    int64_t ts;                           // Zeitstempel des neuesten Blocks
 } BA;
 
 static void ba_paint(canvas_t *c, uint32_t seed, bool fresh)
@@ -1387,11 +1382,10 @@ static void ba_paint(canvas_t *c, uint32_t seed, bool fresh)
 static void ba_x(void *o, int32_t v) { lv_obj_set_x(o, v); }
 static void ba_y(void *o, int32_t v) { lv_obj_set_y(o, v); }
 static void ba_fade(void *o, int32_t v) { lv_obj_set_style_opa(o, (lv_opa_t)v, 0); }
-static void ba_fade_out(void *o, int32_t v) { lv_obj_set_style_opa(o, (lv_opa_t)v, 0); }
 static void ba_link(void *o, int32_t v) { lv_obj_set_style_bg_color(o, lv_color_mix(C_LINE2, C_PINK, (uint8_t)v), 0); }
+static void ba_numcol(void *o, int32_t v) { lv_obj_set_style_text_color(o, lv_color_mix(C_TEXT, C_PINK, (uint8_t)v), 0); }
 
-static void ba_anim(void *var, lv_anim_exec_xcb_t cb, int from, int to, int delay, int ms, lv_anim_path_cb_t path,
-                    bool early, lv_anim_ready_cb_t ready)
+static void ba_anim(void *var, lv_anim_exec_xcb_t cb, int from, int to, int delay, int ms, lv_anim_path_cb_t path, bool early)
 {
     lv_anim_t a;
     lv_anim_init(&a);
@@ -1402,65 +1396,130 @@ static void ba_anim(void *var, lv_anim_exec_xcb_t cb, int from, int to, int dela
     lv_anim_set_time(&a, ms);
     lv_anim_set_path_cb(&a, path ? path : lv_anim_path_ease_in_out);
     lv_anim_set_early_apply(&a, early);
-    if (ready) lv_anim_set_ready_cb(&a, ready);
     lv_anim_start(&a);
 }
 
 static void ba_stop(void)
 {
-    lv_anim_del(BA.scr, NULL);
     for (int i = 0; i < BA_N; i++) lv_anim_del(BA.box[i], NULL);
     for (int i = 0; i < BA_N - 1; i++) lv_anim_del(BA.link[i], NULL);
     lv_anim_del(BA.old_n, NULL);
     lv_anim_del(BA.new_n, NULL);
 }
 
-static void ba_close(void)
+static void build_newblock(lv_obj_t *t)
 {
-    ba_stop();
-    lv_obj_add_flag(BA.scr, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_style_opa(BA.scr, LV_OPA_COVER, 0);
-}
-
-static void ba_done(lv_anim_t *a) { ba_close(); }
-static void ba_tap_cb(lv_event_t *e) { ba_close(); }
-
-static void build_block_anim(void)
-{
-    BA.scr = rect(lv_layer_top(), 0, 0, W, H, C_BG);
-    lv_obj_add_flag(BA.scr, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(BA.scr, ba_tap_cb, LV_EVENT_CLICKED, NULL);
-    cap(BA.scr, W, "NEUER BLOCK", 'l', MX, 30);
-    BA.time = txt(BA.scr, W, &font_m14, C_TEXT2, "", 'r', W - MX, 30);
+    BA.title = cap(t, W, "NEUER BLOCK", 'l', MX, 30);
+    BA.time = txt(t, W, &font_m14, C_TEXT2, "", 'r', W - MX, 30);
     // Verbindungen zwischen den Plätzen und ein leerer Platz für den nächsten Block
     for (int i = 0; i < BA_N - 1; i++)
-        BA.link[i] = rect(BA.scr, BA_X0 + i * BA_PITCH + 12 + BA_SZ, BA_Y + BA_SZ / 2 - 1, BA_PITCH - BA_SZ, 2, C_LINE2);
-    lv_obj_t *slot = rect(BA.scr, BA_X0 + (BA_N - 1) * BA_PITCH + 12, BA_Y, BA_SZ - 1, BA_SZ - 1, C_BG);
+        BA.link[i] = rect(t, BA_X0 + i * BA_PITCH + 12 + BA_SZ, BA_Y + BA_SZ / 2 - 1, BA_PITCH - BA_SZ, 2, C_LINE2);
+    lv_obj_t *slot = rect(t, BA_X0 + (BA_N - 1) * BA_PITCH + 12, BA_Y, BA_SZ - 1, BA_SZ - 1, C_BG);
     lv_obj_set_style_border_width(slot, 1, 0);
     lv_obj_set_style_border_color(slot, C_LINE2, 0);
     lv_obj_set_style_radius(slot, 2, 0);
     for (int i = 0; i < BA_N; i++) {
-        BA.box[i] = rect(BA.scr, 0, 0, BA_PITCH, BA_SZ + 26, C_BG);
+        BA.box[i] = rect(t, BA_X0 + i * BA_PITCH, BA_Y, BA_PITCH, BA_SZ + 26, C_BG);
         lv_obj_set_style_bg_opa(BA.box[i], LV_OPA_TRANSP, 0);
+        lv_obj_set_style_opa(BA.box[i], LV_OPA_TRANSP, 0);
         lv_obj_clear_flag(BA.box[i], LV_OBJ_FLAG_CLICKABLE);
         canvas_create(&BA.cv[i], BA.box[i], 12, 0, BA_SZ, BA_SZ);
         BA.lbl[i] = txt(BA.box[i], BA_PITCH, &font_m12, C_TEXT3, "", 'c', BA_PITCH / 2, BA_SZ + 20);
     }
     // Blockhöhe: gleicher Anfang fest, die geänderten Ziffern rollen in einem Fenster
     const lv_font_t *f = &font_g72;
-    BA.pre = tight(txt(BA.scr, W, f, C_TEXT, "", 'l', 0, BA_NUM_Y), BA_LS);
-    BA.num_box = rect(BA.scr, 0, BA_NUM_Y - ascent(f), 10, f->line_height, C_BG);
+    BA.pre = tight(txt(t, W, f, C_TEXT, "–", 'c', W / 2, BA_NUM_Y), BA_LS);
+    BA.num_box = rect(t, 0, BA_NUM_Y - ascent(f), 10, f->line_height, C_BG);
     lv_obj_clear_flag(BA.num_box, LV_OBJ_FLAG_CLICKABLE);
     BA.old_n = tight(txt(BA.num_box, W, f, C_TEXT, "", 'l', 0, ascent(f)), BA_LS);
     BA.new_n = tight(txt(BA.num_box, W, f, C_PINK, "", 'l', 0, ascent(f)), BA_LS);
-    BA.info = txt(BA.scr, W, &font_m14, C_TEXT2, "", 'c', W / 2, 282);
-    lv_obj_add_flag(BA.scr, LV_OBJ_FLAG_HIDDEN);
+    BA.info = txt(t, W, &font_m14, C_TEXT2, "", 'c', W / 2, 282);
+}
+
+// Zählwerk: gleicher Anfang steht, der Rest rollt von old_h auf new_h (gleich = nur anzeigen)
+static void ba_number(uint32_t old_h, uint32_t new_h)
+{
+    char n1[24], n2[24], pre[24];
+    fmt_plain(n1, sizeof(n1), old_h);
+    fmt_plain(n2, sizeof(n2), new_h);
+    int p = 0;
+    if (strlen(n1) == strlen(n2))
+        while (n1[p] && n1[p] == n2[p]) p++;
+    memcpy(pre, n2, p);
+    pre[p] = 0;
+    lv_label_set_text(BA.pre, pre);
+    lv_label_set_text(BA.old_n, n1 + p);
+    lv_label_set_text(BA.new_n, n2 + p);
+    const lv_font_t *f = &font_g72;
+    int wp = p ? lv_txt_get_width(pre, strlen(pre), f, -BA_LS, LV_TEXT_FLAG_NONE) : 0;
+    int wn = lv_txt_get_width(n2 + p, strlen(n2 + p), f, -BA_LS, LV_TEXT_FLAG_NONE);
+    int wo = lv_txt_get_width(n1 + p, strlen(n1 + p), f, -BA_LS, LV_TEXT_FLAG_NONE);
+    if (p && wn) wp -= BA_LS; // Laufweite zwischen festem und rollendem Teil
+    int x0 = (W - wp - wn) / 2;
+    lv_obj_align(BA.pre, LV_ALIGN_TOP_LEFT, x0, BA_NUM_Y - ascent(f));
+    lv_obj_set_x(BA.num_box, x0 + wp);
+    lv_obj_set_width(BA.num_box, (wn > wo ? wn : wo) + 6);
+    lv_obj_set_y(BA.old_n, 0);
+    lv_obj_set_y(BA.new_n, old_h == new_h ? 0 : f->line_height);
+}
+
+static void ba_info(const char *pool, uint32_t tx, double reward, int64_t ts)
+{
+    char b[96], n[24];
+    int o = snprintf(b, sizeof(b), "%s", pool && pool[0] ? pool : "Unbekannter Pool");
+    if (tx) {
+        fmt_de(n, sizeof(n), tx, 0);
+        o += snprintf(b + o, sizeof(b) - o, " · %s Transaktionen", n);
+    }
+    if (reward > 0) {
+        fmt_de(n, sizeof(n), reward, 3);
+        snprintf(b + o, sizeof(b) - o, " · %s BTC", n);
+    }
+    lv_label_set_text(BA.info, b);
+    BA.ts = ts;
+    block_card_age();
+}
+
+// Überschrift und Uhrzeit/Alter des neuesten Blocks (alle paar Sekunden)
+static void block_card_age(void)
+{
+    if (BA.ts <= 0 || !net_time_valid()) { lv_label_set_text(BA.time, ""); return; }
+    int64_t age = time(NULL) - BA.ts;
+    time_t t = (time_t)BA.ts;
+    struct tm tm;
+    localtime_r(&t, &tm);
+    char hm[8], b[48];
+    strftime(hm, sizeof(hm), "%H:%M", &tm);
+    if (age < 60) snprintf(b, sizeof(b), "%s Uhr · gerade eben", hm);
+    else snprintf(b, sizeof(b), "%s Uhr · vor %d Min", hm, (int)(age / 60));
+    if (strcmp(lv_label_get_text(BA.time), b)) lv_label_set_text(BA.time, b);
+    const char *ti = age < 600 ? "NEUER BLOCK" : "LETZTER BLOCK";
+    if (strcmp(lv_label_get_text(BA.title), ti)) lv_label_set_text(BA.title, ti);
+}
+
+// Ruhezustand: die letzten fünf Blöcke, der neueste pink, rechts der freie Platz
+static void block_card_set(uint32_t h, const char *pool, uint32_t tx, double reward, int64_t ts)
+{
+    ba_stop();
+    for (int i = 0; i < BA_N; i++) {
+        bool on = i < BA_N - 1;
+        uint32_t hh = h - (BA_N - 2) + i;
+        lv_obj_set_pos(BA.box[i], BA_X0 + i * BA_PITCH, BA_Y);
+        lv_obj_set_style_opa(BA.box[i], on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        if (!on) continue;
+        ba_paint(&BA.cv[i], hh, i == BA_N - 2);
+        lv_label_set_text_fmt(BA.lbl[i], "%u", (unsigned)hh);
+        lv_obj_set_style_text_color(BA.lbl[i], i == BA_N - 2 ? C_PINK : C_TEXT3, 0);
+    }
+    for (int i = 0; i < BA_N - 1; i++) lv_obj_set_style_bg_color(BA.link[i], C_LINE2, 0);
+    ba_number(h, h);
+    lv_obj_set_style_text_color(BA.new_n, C_TEXT, 0);
+    ba_info(pool, tx, reward, ts);
 }
 
 static void block_anim_show(uint32_t old_h, uint32_t new_h, const char *pool, uint32_t tx, double reward, int64_t ts)
 {
     ba_stop();
-    char b[96], n1[24], n2[24];
     // Kette: die letzten fünf Blöcke, der neue wartet oberhalb seines Platzes
     for (int i = 0; i < BA_N; i++) {
         bool fresh = i == BA_N - 1;
@@ -1472,65 +1531,23 @@ static void block_anim_show(uint32_t old_h, uint32_t new_h, const char *pool, ui
         lv_obj_set_style_text_color(BA.lbl[i], fresh ? C_PINK : C_TEXT3, 0);
     }
     for (int i = 0; i < BA_N - 1; i++) lv_obj_set_style_bg_color(BA.link[i], C_LINE2, 0);
-    // Zählwerk vorbereiten
-    fmt_plain(n1, sizeof(n1), old_h);
-    fmt_plain(n2, sizeof(n2), new_h);
-    int p = 0;
-    if (strlen(n1) == strlen(n2))
-        while (n1[p] && n1[p] == n2[p]) p++;
-    char pre[24];
-    memcpy(pre, n2, p);
-    pre[p] = 0;
-    lv_label_set_text(BA.pre, pre);
-    lv_label_set_text(BA.old_n, n1 + p);
-    lv_label_set_text(BA.new_n, n2 + p);
-    const lv_font_t *f = &font_g72;
-    int wp = p ? lv_txt_get_width(pre, strlen(pre), f, -BA_LS, LV_TEXT_FLAG_NONE) - BA_LS : 0;
-    int wn = lv_txt_get_width(n2 + p, strlen(n2 + p), f, -BA_LS, LV_TEXT_FLAG_NONE);
-    int wo = lv_txt_get_width(n1 + p, strlen(n1 + p), f, -BA_LS, LV_TEXT_FLAG_NONE);
-    int x0 = (W - wp - wn) / 2;
-    lv_obj_set_x(BA.pre, x0);
-    lv_obj_set_x(BA.num_box, x0 + wp);
-    lv_obj_set_width(BA.num_box, (wn > wo ? wn : wo) + 6);
+    ba_number(old_h, new_h);
     lv_obj_set_style_text_color(BA.new_n, C_PINK, 0);
-    // Pool, Transaktionen, Belohnung, Uhrzeit
-    int o = snprintf(b, sizeof(b), "%s", pool && pool[0] ? pool : "Unbekannter Pool");
-    if (tx) {
-        fmt_de(n1, sizeof(n1), tx, 0);
-        o += snprintf(b + o, sizeof(b) - o, " · %s Transaktionen", n1);
-    }
-    if (reward > 0) {
-        fmt_de(n1, sizeof(n1), reward, 3);
-        snprintf(b + o, sizeof(b) - o, " · %s BTC", n1);
-    }
-    lv_label_set_text(BA.info, b);
-    b[0] = 0;
-    if (ts > 0 && net_time_valid()) {
-        time_t t = (time_t)ts;
-        struct tm tm;
-        localtime_r(&t, &tm);
-        strftime(b, sizeof(b), "%H:%M Uhr", &tm);
-    }
-    lv_label_set_text(BA.time, b);
-
-    lv_obj_clear_flag(BA.scr, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(BA.scr);
-    lv_disp_trig_activity(NULL); // weckt aus dem Nachtmodus
-    int lh = f->line_height;
-    ba_anim(BA.scr, ba_fade_out, LV_OPA_COVER, LV_OPA_TRANSP, 7600, 400, lv_anim_path_ease_in, false, ba_done);
-    ba_anim(BA.scr, ba_fade, LV_OPA_TRANSP, LV_OPA_COVER, 0, 220, NULL, true, NULL);
+    ba_info(pool, tx, reward, ts);
+    int lh = font_g72.line_height;
     // 1. der neue Block fällt auf seinen Platz
-    ba_anim(BA.box[BA_N - 1], ba_y, -BA_SZ - 40, BA_Y, 350, 700, lv_anim_path_bounce, true, NULL);
+    ba_anim(BA.box[BA_N - 1], ba_y, -BA_SZ - 40, BA_Y, 350, 700, lv_anim_path_bounce, true);
     // 2. Verbindung leuchtet auf, die Höhe rollt hoch
-    ba_anim(BA.link[BA_N - 2], ba_link, 0, 255, 1000, 1400, lv_anim_path_ease_out, false, NULL);
-    ba_anim(BA.old_n, ba_y, 0, -lh, 1050, 520, lv_anim_path_ease_out, true, NULL);
-    ba_anim(BA.new_n, ba_y, lh, 0, 1050, 520, lv_anim_path_ease_out, true, NULL);
-    // 3. die Kette rückt weiter, der älteste Block verschwindet links
+    ba_anim(BA.link[BA_N - 2], ba_link, 0, 255, 1000, 1400, lv_anim_path_ease_out, false);
+    ba_anim(BA.old_n, ba_y, 0, -lh, 1050, 520, lv_anim_path_ease_out, true);
+    ba_anim(BA.new_n, ba_y, lh, 0, 1050, 520, lv_anim_path_ease_out, true);
+    // 3. die Kette rückt weiter, der älteste Block verschwindet links; die neue Ziffer wird wieder hell
     for (int i = 0; i < BA_N; i++) {
         int x = BA_X0 + i * BA_PITCH;
-        ba_anim(BA.box[i], ba_x, x, x - BA_PITCH, 3000, 650, NULL, false, NULL);
+        ba_anim(BA.box[i], ba_x, x, x - BA_PITCH, 3000, 650, NULL, false);
     }
-    ba_anim(BA.box[0], ba_fade, LV_OPA_COVER, LV_OPA_TRANSP, 3000, 450, NULL, false, NULL);
+    ba_anim(BA.box[0], ba_fade, LV_OPA_COVER, LV_OPA_TRANSP, 3000, 450, NULL, false);
+    ba_anim(BA.new_n, ba_numcol, 0, 255, 4200, 900, NULL, false);
 }
 
 // Preisalarm: einmal pro Überschreiten, erneut erst nach 0,5 % Rückkehr
@@ -2051,6 +2068,7 @@ static void bench_cb(lv_timer_t *t)
             static int64_t t0;
             int64_t now = esp_timer_get_time() / 1000;
             if (wait++ == 0) {
+                car_jump(CARD_NEWBLOCK, false);
                 data_lock();
                 deck_data_t *d = data_get();
                 uint32_t h = d->height ? d->height : 920000;
@@ -2063,7 +2081,7 @@ static void bench_cb(lv_timer_t *t)
             if (now - t0 < ba_at[k]) return;
         } else if (++wait < 20) return;
         sid = k >= 0 ? 30 + k : idx;
-        snap = lv_snapshot_take(k >= 0 ? BA.scr : lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
+        snap = lv_snapshot_take(lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
         if (!snap) { printf("SNAPERR %d\n", sid); idx++; wait = 0; return; }
         printf("\nSNAP %d %d %d\n", sid, (int)snap->header.w, (int)snap->header.h);
         row = 0;
@@ -2086,7 +2104,6 @@ static void bench_cb(lv_timer_t *t)
         else if (idx == N_TILES) open_cfg();
         else if (idx == N_TILES + 1) open_menu();
         else if (idx == N_TILES + 2) overlay_close();
-        else if (idx == N_TILES + 2 + 4) ba_close();
     }
 }
 #elif defined(CONFIG_DECK_PERF_BENCH)
@@ -2333,15 +2350,15 @@ void ui_init(void)
     build_dual(tiles[1]);
     build_chart(tiles[2]);
     build_block(tiles[3]);
-    build_fees(tiles[4]);
-    build_difficulty(tiles[5]);
-    build_clock(tiles[6]);
-    build_miner(tiles[7]);
-    build_cost(tiles[8]);
-    build_lottery(tiles[9]);
+    build_newblock(tiles[CARD_NEWBLOCK]);
+    build_fees(tiles[5]);
+    build_difficulty(tiles[6]);
+    build_clock(tiles[7]);
+    build_miner(tiles[8]);
+    build_cost(tiles[9]);
+    build_lottery(tiles[10]);
     if (!card_on(0)) car_jump(card_step(0, 1), false);
     build_overlays();
-    build_block_anim();
     toast_create();
     build_update_screen();
     build_boot();

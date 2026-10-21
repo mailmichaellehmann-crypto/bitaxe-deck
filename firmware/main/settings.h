@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define DECK_MAX_MINERS 1
-#define DECK_CARDS 10
+#define DECK_CARDS 11
 #define DECK_CARDS_ALL ((1u << DECK_CARDS) - 1)
 extern const char *const DECK_CARD_NAMES[DECK_CARDS];
 
@@ -26,7 +26,7 @@ typedef struct {
     uint8_t brightness;  // 5..100 %
     uint8_t chart_style; // Chart-Fläche: 0 = Punkte, 1 = ohne Verlauf, 2 = Pixel (Mosaik)
     bool auto_update;    // OTA-Updates automatisch installieren
-    uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 8 = Kosten, Bit 9 = Lotterie)
+    uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 4 = Neuer Block … Bit 10 = Lotterie)
 } deck_settings_t;
 
 extern deck_settings_t g_settings;

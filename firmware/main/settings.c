@@ -17,7 +17,8 @@ deck_settings_t g_settings = {
     .card_mask = DECK_CARDS_ALL,
 };
 
-const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis", "USD / EUR", "Chart", "Block", "Gebühren", "Difficulty", "Uhr", "Bitaxe", "Kosten", "Lotterie"};
+const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",      "USD / EUR", "Chart",  "Block",  "Neuer Block", "Gebühren",
+                                                 "Difficulty", "Uhr",       "Bitaxe", "Kosten", "Lotterie"};
 
 static const char *MINER_KEYS[DECK_MAX_MINERS] = {"bitaxe"};
 
@@ -68,8 +69,9 @@ void settings_load(void)
     if (nvs_get_u16(h, "cards", &r) == ESP_OK) {
         uint8_t n = 9;
         get_u8(h, "cardsn", &n);
-        // ältere Firmware mit 9 Karten: „Kosten“ kommt neu an Platz 8 (an), Lotterie rückt auf 9
-        if (n < 10) r = (r & 0xFF) | (((r >> 8) & 1) << 9) | (1u << 8);
+        // ältere Firmware: neue Karten eingeschaltet einfügen, die folgenden rücken auf
+        if (n < 10) r = (r & 0xFF) | (((r >> 8) & 1) << 9) | (1u << 8);        // „Kosten“ an Platz 8
+        if (n < 11) r = (r & 0x0F) | ((uint16_t)(r & ~0x0Fu) << 1) | (1u << 4); // „Neuer Block“ an Platz 4
         g_settings.card_mask = r & DECK_CARDS_ALL;
     }
     if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;
