@@ -20,6 +20,9 @@
 #include "net.h"
 #include "settings.h"
 #include "shares.h"
+#ifdef CONFIG_DECK_SNAPSHOT
+#include "mbedtls/base64.h"
+#endif
 #include "ota.h"
 
 LV_FONT_DECLARE(font_g20);
@@ -1511,6 +1514,188 @@ static void bench_cb(lv_timer_t *t)
 }
 #endif
 
+
+// ------------------------------------------------------------------ Boot-Screen (ca. 10 s nach dem Start)
+// Pixel-Mosaik baut sich in einer diagonalen Welle auf, Schriftzug blendet ein, darunter der echte
+// Startvorgang (Display, WLAN, Bitaxe, Kurs, Block). Ein Tippen überspringt ihn.
+#define BOOT_MS 10000
+#define BC 8 // Mosaik-Zelle
+static struct {
+    lv_obj_t *scr, *word, *sub, *ver, *row_v[5], *row_d[5], *cells[55];
+    canvas_t mos;
+    lv_timer_t *tm;
+    int64_t t0;
+    bool closing;
+    uint8_t target[60 * 40]; // Ziel-Helligkeit je Zelle
+    uint8_t cur[60 * 40];
+} BS;
+
+static void boot_fade_exec(void *var, int32_t v) { lv_obj_set_style_opa(var, (lv_opa_t)v, 0); }
+static void boot_done(lv_anim_t *a)
+{
+    lv_timer_del(BS.tm);
+    lv_obj_del(BS.scr);
+    heap_caps_free(BS.mos.buf); // 300 KB Mosaik-Puffer wieder freigeben
+    BS.mos.buf = NULL;
+    BS.scr = NULL;
+}
+
+static void boot_close(void)
+{
+    if (BS.closing) return;
+    BS.closing = true;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, BS.scr);
+    lv_anim_set_exec_cb(&a, boot_fade_exec);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
+    lv_anim_set_time(&a, 450);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+    lv_anim_set_ready_cb(&a, boot_done);
+    lv_anim_start(&a);
+}
+
+static void boot_tap_cb(lv_event_t *e) { boot_close(); }
+
+static void boot_row(int i, const char *val, bool ok)
+{
+    lv_label_set_text(BS.row_v[i], val);
+    lv_obj_set_style_text_color(BS.row_v[i], ok ? C_TEXT : C_TEXT3, 0);
+    lv_obj_set_style_bg_color(BS.row_d[i], ok ? C_PINK : C_LINE, 0);
+}
+
+static void boot_tick(lv_timer_t *t)
+{
+    if (!BS.scr || BS.closing) return;
+    int64_t ms = esp_timer_get_time() / 1000 - BS.t0;
+    // Mosaik: Zellen erscheinen in einer Welle von rechts unten, danach leichtes Flackern
+    const int cols = 60, rows = 40;
+    bool dirty = false;
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            int i = r * cols + c;
+            int start = ((cols - c) + (rows - r)) * 22 + (int)(hash2(c, r) % 260);
+            int want = ms < start ? 0 : BS.target[i];
+            if (ms > 3500 && BS.target[i] && (hash2(c * 7 + (int)(ms / 180), r) % 97) == 0) want = BS.target[i] / 3; // Flackern
+            int v = BS.cur[i];
+            if (v != want) {
+                v += (want - v) / 3 + (want > v ? 1 : -1);
+                if ((want > BS.cur[i] && v > want) || (want < BS.cur[i] && v < want)) v = want;
+                BS.cur[i] = v;
+                lv_color_t col = BS.target[i] == 255 ? lv_color_mix(C_PINK, C_BG, v) : gray(v);
+                if (BS.target[i] == 255 && v < 255) col = lv_color_mix(C_PINK, C_BG, v);
+                fill_box(&BS.mos, c * BC, r * BC, BC - 1, BC - 1, BS.target[i] == 255 ? col : gray(v));
+                dirty = true;
+            }
+        }
+    if (dirty) lv_obj_invalidate(BS.mos.cv);
+
+    // Schriftzug einblenden
+    int wo = ms < 1400 ? 0 : ms > 2400 ? 255 : (int)((ms - 1400) * 255 / 1000);
+    lv_obj_set_style_text_opa(BS.word, wo, 0);
+    lv_obj_set_style_text_opa(BS.sub, wo, 0);
+    lv_obj_set_style_text_opa(BS.ver, wo, 0);
+
+    // Startvorgang mit echten Daten
+    char b[64], n[24];
+    if (ms > 2600) boot_row(0, "480 × 320 · LVGL 8.4", true);
+    if (ms > 3400) {
+        char ip[20];
+        net_ip(ip, sizeof(ip));
+        net_state_t st = net_state();
+        if (st == NET_CONNECTED) { snprintf(b, sizeof(b), "%s · %s", g_settings.wifi_ssid, ip); boot_row(1, b, true); }
+        else if (st == NET_PORTAL) boot_row(1, "Einrichtung · " DECK_AP_SSID, true);
+        else boot_row(1, "verbinde …", false);
+    }
+    data_lock();
+    deck_data_t *d = data_get();
+    if (ms > 4400) {
+        miner_t *m = &d->miners[0];
+        if (d->miner_n && m->mode == MINER_ONLINE) {
+            fmt_de(n, sizeof(n), m->hashrate_gh / 1000, 2);
+            snprintf(b, sizeof(b), "%s TH/s · %s", n, m->host);
+            boot_row(2, b, true);
+        } else boot_row(2, g_settings.bitaxe_host[0][0] ? "suche …" : "Demo", d->miner_n && m->mode == MINER_DEMO);
+    }
+    if (ms > 5400) {
+        if (d->price_ok) {
+            fmt_de(n, sizeof(n), g_settings.currency ? d->eur : d->usd, 0);
+            snprintf(b, sizeof(b), "%s %s", n, settings_cur());
+            boot_row(3, b, true);
+        } else boot_row(3, "lade …", false);
+    }
+    if (ms > 6400) {
+        if (d->net_ok) { snprintf(b, sizeof(b), "%u", (unsigned)d->height); boot_row(4, b, true); }
+        else boot_row(4, "lade …", false);
+    }
+    data_unlock();
+#ifdef CONFIG_DECK_SNAPSHOT
+    static int shot = 0;
+    static const int when[3] = {1300, 3800, 8600};
+    if (shot < 3 && ms >= when[shot]) {
+        lv_refr_now(NULL);
+        lv_img_dsc_t *sn = lv_snapshot_take(BS.scr, LV_IMG_CF_TRUE_COLOR);
+        if (sn) {
+            printf("\nSNAP %d %d %d\n", 20 + shot, (int)sn->header.w, (int)sn->header.h);
+            static unsigned char out[480 * 2 * 4 / 3 + 8];
+            for (int r = 0; r < (int)sn->header.h; r++) {
+                size_t olen = 0;
+                mbedtls_base64_encode(out, sizeof(out), &olen, sn->data + r * sn->header.w * 2, sn->header.w * 2);
+                out[olen] = 0;
+                printf("R%d %s\n", r, out);
+            }
+            printf("SNAPEND %d\n", 20 + shot);
+            lv_snapshot_free(sn);
+        }
+        shot++;
+    }
+#endif
+    int n55 = (int)(ms * 55 / BOOT_MS);
+    for (int i = 0; i < 55; i++) lv_obj_set_style_bg_color(BS.cells[i], i < n55 ? C_PINK : C_LINE, 0);
+    if (ms >= BOOT_MS) boot_close();
+}
+
+static void build_boot(void)
+{
+    BS.t0 = esp_timer_get_time() / 1000;
+    BS.scr = rect(lv_layer_top(), 0, 0, W, H, C_BG);
+    lv_obj_add_flag(BS.scr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(BS.scr, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_event_cb(BS.scr, boot_tap_cb, LV_EVENT_CLICKED, NULL);
+    canvas_create(&BS.mos, BS.scr, 0, 0, W, H);
+    // Zielbild: wie der Strike-Hintergrund rechts dichter und heller, links frei für den Text
+    for (int r = 0; r < 40; r++)
+        for (int c = 0; c < 60; c++) {
+            uint32_t h = hash2(c + 101, r + 37);
+            float x = c / 59.0f, y = r / 39.0f;
+            float dens = x * x * 1.25f - (y > 0.55f && x < 0.75f ? 0.6f : 0) - (y < 0.62f && y > 0.28f && x < 0.62f ? 0.7f : 0);
+            int v = 0;
+            if ((h % 1000) / 1000.0f < dens) v = 0x14 + (int)((h >> 10) % 0x30) + (int)(x * 0x20);
+            if (v && (h % 61) == 0) v = 255; // vereinzelte pinke Zellen
+            BS.target[r * 60 + c] = v;
+        }
+    BS.sub = cap(BS.scr, W, "SOLO MINING TERMINAL", 'l', MX, 104);
+    BS.word = tight(txt(BS.scr, W, &font_g50, C_TEXT, "Bitaxe Deck", 'l', MX - 2, 158), 2);
+    BS.ver = txt(BS.scr, W, &font_m12, C_TEXT3, "", 'l', MX, 182);
+    lv_label_set_text_fmt(BS.ver, "v.%s", deck_version());
+    static const char *names[5] = {"DISPLAY", "WLAN", "BITAXE", "KURS", "BLOCK"};
+    for (int i = 0; i < 5; i++) {
+        int y = 212 + i * 16;
+        BS.row_d[i] = rect(BS.scr, MX, y - 7, 5, 5, C_LINE);
+        lv_obj_set_style_radius(BS.row_d[i], 1, 0);
+        cap(BS.scr, W, names[i], 'l', MX + 14, y);
+        BS.row_v[i] = txt(BS.scr, W, &font_m12, C_TEXT3, "", 'l', MX + 90, y);
+    }
+    for (int i = 0; i < 55; i++) {
+        BS.cells[i] = rect(BS.scr, MX + i * 8, 302, 6, 4, C_LINE);
+        lv_obj_set_style_radius(BS.cells[i], 1, 0);
+    }
+    lv_obj_set_style_text_opa(BS.word, 0, 0);
+    lv_obj_set_style_text_opa(BS.sub, 0, 0);
+    lv_obj_set_style_text_opa(BS.ver, 0, 0);
+    BS.tm = lv_timer_create(boot_tick, 33, NULL);
+}
+
 void ui_init(void)
 {
     lv_obj_t *scr = lv_scr_act();
@@ -1545,6 +1730,7 @@ void ui_init(void)
     build_overlays();
     toast_create();
     build_update_screen();
+    build_boot();
 
     lv_timer_create(ui_timer_cb, 500, NULL);
     lv_timer_create(lottery_tick, 120, NULL);

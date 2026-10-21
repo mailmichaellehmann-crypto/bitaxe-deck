@@ -30,6 +30,12 @@ Einzige Akzentfarbe: softes Pink `#FFD4D4` (sRGB 255/212/212). Kursänderungen i
 Ohne Bitaxe zeigt das Display Demo-Werte (Kennzeichen **DEMO**, türkis). Ist ein Bitaxe eingetragen,
 aber nicht erreichbar, steht dort **OFFLINE** in Rot, mit dem Grund; auch dann laufen Demo-Werte.
 
+## Boot-Screen
+
+Nach jedem Start zeigt das Display etwa 10 Sekunden lang einen Boot-Screen: Pixel-Mosaik in einer
+diagonalen Welle, Schriftzug „Bitaxe Deck“ und der echte Startvorgang (Display, WLAN, Bitaxe, Kurs,
+Block). Ein Tippen überspringt ihn.
+
 ## Share-Lotterie
 
 Das Display liest den Log-Stream des Bitaxe (`ws://<IP>/api/ws`) und wertet jede Zeile
