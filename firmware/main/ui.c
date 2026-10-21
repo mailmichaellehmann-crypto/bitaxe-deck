@@ -52,7 +52,7 @@ LV_FONT_DECLARE(font_m20);
 
 #define W LCD_H_RES
 #define H LCD_V_RES
-#define N_TILES 9
+#define N_TILES DECK_CARDS
 #define MX 20 // Seitenrand
 
 // ------------------------------------------------------------------ Formatierung (deutsch)
@@ -797,8 +797,119 @@ static void build_miner(lv_obj_t *t)
     }
 }
 
+// ---- 8 Mining-Kosten: aktueller Verbrauch, hochgerechnete Kosten, gezählte kWh
+static struct {
+    lv_obj_t *status, *dot, *watt, *unit, *price, *ticket, *cost[3], *kwh[3], *e_title[2], *e_val[2], *e_cost[2];
+    double power, btc;       // Leistung (W), Kurs in Euro (Strom wird in Euro bezahlt)
+    double e_wh, e_day_wh;   // gezählter Verbrauch gesamt / heute
+    int64_t since;
+    bool have;
+} KS;
 
-// ---- 8 Share-Lotterie: jeder gefundene Hash fällt als Punkt in ein Histogramm (log. Skala).
+static lv_obj_t *round_btn(lv_obj_t *p, int x, int y, int d, const char *s, const lv_font_t *f);
+
+static void cost_render(void)
+{
+    char b[64], n[24];
+    double ct = g_settings.kwh_price * 100.0;
+    fmt_de(n, sizeof(n), ct, fabs(ct - round(ct)) < 0.05 ? 0 : 1);
+    snprintf(b, sizeof(b), "%s ct/kWh", n);
+    lv_label_set_text(KS.price, b);
+    if (!KS.have) return;
+    double p = KS.power > 0 ? KS.power : 0;
+    fmt_de(n, sizeof(n), p, 1);
+    lv_label_set_text(KS.watt, n);
+    lv_obj_update_layout(KS.watt);
+    lv_obj_set_x(KS.unit, lv_obj_get_x(KS.watt) + lv_obj_get_width(KS.watt) + 10);
+    // Hochrechnung aus der aktuellen Leistung
+    static const double days[3] = {1, 365.0 / 12, 365};
+    double kwh_day = p * 24 / 1000;
+    for (int i = 0; i < 3; i++) {
+        double kwh = kwh_day * days[i], cost = kwh * g_settings.kwh_price;
+        fmt_de(n, sizeof(n), cost, cost >= 100 ? 0 : 2);
+        lv_label_set_text(KS.cost[i], n);
+        fmt_de(n, sizeof(n), kwh, kwh >= 100 ? 0 : kwh >= 10 ? 1 : 2);
+        snprintf(b, sizeof(b), "%s kWh", n);
+        lv_label_set_text(KS.kwh[i], b);
+    }
+    // Kosten eines Tages in sats: der Preis des Lotterieloses
+    if (KS.btc > 0) {
+        fmt_de(n, sizeof(n), kwh_day * g_settings.kwh_price / KS.btc * 1e8, 0);
+        snprintf(b, sizeof(b), "ca. #FFD4D4 %s sat# pro Tag", n);
+    } else snprintf(b, sizeof(b), "ca. – sat pro Tag");
+    lv_label_set_text(KS.ticket, b);
+    // gezählter Verbrauch
+    double wh[2] = {KS.e_day_wh, KS.e_wh};
+    for (int i = 0; i < 2; i++) {
+        double kwh = wh[i] / 1000;
+        fmt_de(n, sizeof(n), kwh, kwh >= 100 ? 0 : kwh >= 10 ? 1 : 2);
+        snprintf(b, sizeof(b), "%s kWh", n);
+        lv_label_set_text(KS.e_val[i], b);
+        fmt_de(n, sizeof(n), kwh * g_settings.kwh_price, 2);
+        snprintf(b, sizeof(b), "%s €", n);
+        lv_label_set_text(KS.e_cost[i], b);
+    }
+    if (KS.since > 0) {
+        time_t ts = (time_t)KS.since;
+        struct tm tm;
+        localtime_r(&ts, &tm);
+        strftime(n, sizeof(n), "%d.%m.%y", &tm);
+        snprintf(b, sizeof(b), "GESAMT SEIT %s", n);
+    } else snprintf(b, sizeof(b), "GESAMT");
+    lv_label_set_text(KS.e_title[1], b);
+}
+
+// Strompreis am Gerät: ± 1 ct
+static void cost_price_cb(lv_event_t *e)
+{
+    int dir = (int)(intptr_t)lv_event_get_user_data(e);
+    double ct = g_settings.kwh_price * 100.0;
+    ct = dir > 0 ? floor(ct + 0.05) + 1 : ceil(ct - 0.05) - 1;
+    if (ct < 0) ct = 0;
+    if (ct > 200) ct = 200;
+    g_settings.kwh_price = (float)(ct / 100.0);
+    settings_save();
+    cost_render();
+}
+
+static void build_cost(lv_obj_t *t)
+{
+    cap(t, W, "MINING-KOSTEN", 'l', MX, 30);
+    KS.status = txt(t, W, &font_m14, C_TEXT2, "", 'r', W - MX, 30);
+    KS.dot = rect(t, 0, 20, 7, 7, C_PINK);
+    lv_obj_set_style_radius(KS.dot, LV_RADIUS_CIRCLE, 0);
+    breathe(KS.dot);
+    KS.watt = tight(txt(t, W, &font_g96, C_TEXT, "–", 'l', MX - 5, 132), 4);
+    KS.unit = txt(t, W, &font_m20, C_TEXT2, "W", 'l', 0, 132);
+    // Strompreis mit – / +
+    cap(t, W, "STROMPREIS", 'r', W - MX, 66);
+    lv_obj_t *m = round_btn(t, 300, 78, 26, "–", &font_m20);
+    lv_obj_add_event_cb(m, cost_price_cb, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
+    lv_obj_t *pl = round_btn(t, W - MX - 26, 78, 26, "+", &font_m20);
+    lv_obj_add_event_cb(pl, cost_price_cb, LV_EVENT_CLICKED, (void *)(intptr_t)1);
+    KS.price = txt(t, W, &font_m14, C_TEXT, "", 'c', (326 + W - MX - 26) / 2, 96);
+    KS.ticket = txt(t, W, &font_m14, C_TEXT2, "", 'r', W - MX, 132);
+    lv_label_set_recolor(KS.ticket, true);
+    static const char *tn[3] = {"PRO TAG", "PRO MONAT", "PRO JAHR"};
+    for (int i = 0; i < 3; i++) {
+        int x = MX + i * 148, w = 144;
+        lv_obj_t *p = panel(t, x, 148, w, 88);
+        cap(p, w, tn[i], 'l', 14, 22);
+        KS.cost[i] = tight(txt(p, w, &font_g36, C_TEXT, "–", 'l', 12, 58), 1);
+        txt(p, w, &font_m14, C_TEXT2, "€", 'r', w - 14, 58);
+        KS.kwh[i] = txt(p, w, &font_m12, C_TEXT3, "", 'l', 14, 76);
+    }
+    for (int i = 0; i < 2; i++) {
+        int x = MX + i * 222, w = 218;
+        lv_obj_t *p = panel(t, x, 244, w, 60);
+        KS.e_title[i] = cap(p, w, i ? "GESAMT" : "VERBRAUCHT HEUTE", 'l', 14, 22);
+        KS.e_val[i] = tight(txt(p, w, &font_g26, C_TEXT, "–", 'l', 12, 48), 1);
+        KS.e_cost[i] = txt(p, w, &font_m14, C_TEXT2, "", 'r', w - 14, 48);
+    }
+    cost_render();
+}
+
+// ---- 9 Share-Lotterie: jeder gefundene Hash fällt als Punkt in ein Histogramm (log. Skala).
 // Links häufige kleine Shares, rechts seltene große, ganz rechts in Pink: der Block.
 #define LT_X MX
 #define LT_Y 118
@@ -959,9 +1070,10 @@ static void lottery_tick(lv_timer_t *t)
 
 // ------------------------------------------------------------------ Aktualisieren
 
-static uint32_t v_price, v_chart, v_net, v_miner;
+static uint32_t v_price, v_chart, v_net, v_miner, v_cost, v_cost_p;
 static void check_price_alarm(double px);
 static void toast_show(const char *title, const char *msg, int ms);
+static void block_anim_show(uint32_t old_h, uint32_t new_h, const char *pool, uint32_t tx, double reward, int64_t ts);
 
 static void set_change(lv_obj_t *l, double pct, const char *suffix)
 {
@@ -1083,11 +1195,9 @@ static void update_network(deck_data_t *d)
     v_net = d->net_ver;
     char b[96], n[24], n2[24];
     static uint32_t last_height = 0;
-    if (last_height && d->height > last_height && g_settings.block_note && d->blocks_n) {
-        char t2[64];
-        snprintf(t2, sizeof(t2), "%u · %s", (unsigned)d->height, d->blocks[0].pool);
-        toast_show("NEUER BLOCK", t2, 6000);
-    }
+    if (last_height && d->height > last_height && g_settings.block_note && d->blocks_n)
+        block_anim_show(last_height, d->height, d->blocks[0].pool, d->blocks[0].tx_count, d->blocks[0].reward_btc,
+                        d->blocks[0].timestamp);
     last_height = d->height;
     fmt_plain(b, sizeof(b), d->height);
     lv_label_set_text(D.height, b);
@@ -1165,6 +1275,29 @@ static void update_miner(deck_data_t *d)
     lv_label_set_text_fmt(HB.val[2], "%d", m->fan_pct);
 }
 
+static void update_cost(deck_data_t *d)
+{
+    if (d->miner_n < 1 || (d->miner_ver == v_cost && d->price_ver == v_cost_p)) return;
+    v_cost = d->miner_ver;
+    v_cost_p = d->price_ver;
+    miner_t *m = &d->miners[0];
+    char b[96];
+    lv_color_t dc;
+    if (m->mode == MINER_ONLINE) { lv_label_set_text(KS.status, m->host); dc = C_PINK; }
+    else if (m->mode == MINER_OFFLINE) { snprintf(b, sizeof(b), "OFFLINE · %s", m->host); lv_label_set_text(KS.status, b); dc = C_DOWN; }
+    else { lv_label_set_text(KS.status, "DEMO"); dc = C_TEXT3; }
+    lv_obj_set_style_bg_color(KS.dot, dc, 0);
+    lv_obj_update_layout(KS.status);
+    lv_obj_set_x(KS.dot, lv_obj_get_x(KS.status) - 14);
+    KS.power = m->power;
+    KS.btc = d->price_ok ? d->eur : 0;
+    KS.e_wh = d->energy_wh;
+    KS.e_day_wh = d->energy_day_wh;
+    KS.since = d->energy_since;
+    KS.have = true;
+    cost_render();
+}
+
 static void update_clock(void)
 {
     static const char *days[7] = {"SONNTAG", "MONTAG", "DIENSTAG", "MITTWOCH", "DONNERSTAG", "FREITAG", "SAMSTAG"};
@@ -1223,6 +1356,183 @@ static void toast_tick(void)
     lv_obj_set_style_border_opa(s_toast, (now / 500) % 2 ? LV_OPA_COVER : LV_OPA_30, 0);
 }
 
+// ------------------------------------------------------------------ Neuer Block
+// Ein pinker Pixel-Block fällt in die Kette der letzten Blöcke, die Blockhöhe rollt wie ein
+// Zählwerk auf den neuen Wert, danach rückt die Kette einen Platz weiter.
+#define BA_N 6                            // Plätze in der Kette (der letzte ist der nächste Block)
+#define BA_SZ 48                          // Kantenlänge eines Blocks: 6 × 6 Zellen à 8 px
+#define BA_PITCH 72
+#define BA_X0 ((W - BA_N * BA_PITCH) / 2)
+#define BA_Y 82
+#define BA_NUM_Y 236                      // Grundlinie der Blockhöhe
+#define BA_LS 3                           // engere Laufweite der großen Zahl
+static struct {
+    lv_obj_t *scr, *time, *info, *pre, *num_box, *old_n, *new_n, *link[BA_N - 1];
+    lv_obj_t *box[BA_N], *lbl[BA_N];      // Container: Block und Höhe darunter
+    canvas_t cv[BA_N];
+} BA;
+
+static void ba_paint(canvas_t *c, uint32_t seed, bool fresh)
+{
+    static const uint32_t pk[4] = {0xFFD4D4, 0xE8BDBD, 0xC9A3A3, 0x9C8080};
+    lv_canvas_fill_bg(c->cv, C_BG, LV_OPA_COVER);
+    for (int r = 0; r < 6; r++)
+        for (int q = 0; q < 6; q++) {
+            uint32_t h = hash2((int)(seed % 100000) * 7 + q, r + 31);
+            fill_box(c, q * 8, r * 8, 7, 7, fresh ? lv_color_hex(pk[h % 4]) : gray(0x2A + (int)(h % 0x38)));
+        }
+    lv_obj_invalidate(c->cv);
+}
+
+static void ba_x(void *o, int32_t v) { lv_obj_set_x(o, v); }
+static void ba_y(void *o, int32_t v) { lv_obj_set_y(o, v); }
+static void ba_fade(void *o, int32_t v) { lv_obj_set_style_opa(o, (lv_opa_t)v, 0); }
+static void ba_fade_out(void *o, int32_t v) { lv_obj_set_style_opa(o, (lv_opa_t)v, 0); }
+static void ba_link(void *o, int32_t v) { lv_obj_set_style_bg_color(o, lv_color_mix(C_LINE2, C_PINK, (uint8_t)v), 0); }
+
+static void ba_anim(void *var, lv_anim_exec_xcb_t cb, int from, int to, int delay, int ms, lv_anim_path_cb_t path,
+                    bool early, lv_anim_ready_cb_t ready)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, var);
+    lv_anim_set_exec_cb(&a, cb);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_delay(&a, delay);
+    lv_anim_set_time(&a, ms);
+    lv_anim_set_path_cb(&a, path ? path : lv_anim_path_ease_in_out);
+    lv_anim_set_early_apply(&a, early);
+    if (ready) lv_anim_set_ready_cb(&a, ready);
+    lv_anim_start(&a);
+}
+
+static void ba_stop(void)
+{
+    lv_anim_del(BA.scr, NULL);
+    for (int i = 0; i < BA_N; i++) lv_anim_del(BA.box[i], NULL);
+    for (int i = 0; i < BA_N - 1; i++) lv_anim_del(BA.link[i], NULL);
+    lv_anim_del(BA.old_n, NULL);
+    lv_anim_del(BA.new_n, NULL);
+}
+
+static void ba_close(void)
+{
+    ba_stop();
+    lv_obj_add_flag(BA.scr, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(BA.scr, LV_OPA_COVER, 0);
+}
+
+static void ba_done(lv_anim_t *a) { ba_close(); }
+static void ba_tap_cb(lv_event_t *e) { ba_close(); }
+
+static void build_block_anim(void)
+{
+    BA.scr = rect(lv_layer_top(), 0, 0, W, H, C_BG);
+    lv_obj_add_flag(BA.scr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(BA.scr, ba_tap_cb, LV_EVENT_CLICKED, NULL);
+    cap(BA.scr, W, "NEUER BLOCK", 'l', MX, 30);
+    BA.time = txt(BA.scr, W, &font_m14, C_TEXT2, "", 'r', W - MX, 30);
+    // Verbindungen zwischen den Plätzen und ein leerer Platz für den nächsten Block
+    for (int i = 0; i < BA_N - 1; i++)
+        BA.link[i] = rect(BA.scr, BA_X0 + i * BA_PITCH + 12 + BA_SZ, BA_Y + BA_SZ / 2 - 1, BA_PITCH - BA_SZ, 2, C_LINE2);
+    lv_obj_t *slot = rect(BA.scr, BA_X0 + (BA_N - 1) * BA_PITCH + 12, BA_Y, BA_SZ - 1, BA_SZ - 1, C_BG);
+    lv_obj_set_style_border_width(slot, 1, 0);
+    lv_obj_set_style_border_color(slot, C_LINE2, 0);
+    lv_obj_set_style_radius(slot, 2, 0);
+    for (int i = 0; i < BA_N; i++) {
+        BA.box[i] = rect(BA.scr, 0, 0, BA_PITCH, BA_SZ + 26, C_BG);
+        lv_obj_set_style_bg_opa(BA.box[i], LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(BA.box[i], LV_OBJ_FLAG_CLICKABLE);
+        canvas_create(&BA.cv[i], BA.box[i], 12, 0, BA_SZ, BA_SZ);
+        BA.lbl[i] = txt(BA.box[i], BA_PITCH, &font_m12, C_TEXT3, "", 'c', BA_PITCH / 2, BA_SZ + 20);
+    }
+    // Blockhöhe: gleicher Anfang fest, die geänderten Ziffern rollen in einem Fenster
+    const lv_font_t *f = &font_g72;
+    BA.pre = tight(txt(BA.scr, W, f, C_TEXT, "", 'l', 0, BA_NUM_Y), BA_LS);
+    BA.num_box = rect(BA.scr, 0, BA_NUM_Y - ascent(f), 10, f->line_height, C_BG);
+    lv_obj_clear_flag(BA.num_box, LV_OBJ_FLAG_CLICKABLE);
+    BA.old_n = tight(txt(BA.num_box, W, f, C_TEXT, "", 'l', 0, ascent(f)), BA_LS);
+    BA.new_n = tight(txt(BA.num_box, W, f, C_PINK, "", 'l', 0, ascent(f)), BA_LS);
+    BA.info = txt(BA.scr, W, &font_m14, C_TEXT2, "", 'c', W / 2, 282);
+    lv_obj_add_flag(BA.scr, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void block_anim_show(uint32_t old_h, uint32_t new_h, const char *pool, uint32_t tx, double reward, int64_t ts)
+{
+    ba_stop();
+    char b[96], n1[24], n2[24];
+    // Kette: die letzten fünf Blöcke, der neue wartet oberhalb seines Platzes
+    for (int i = 0; i < BA_N; i++) {
+        bool fresh = i == BA_N - 1;
+        uint32_t hh = new_h - (BA_N - 1) + i;
+        lv_obj_set_pos(BA.box[i], BA_X0 + i * BA_PITCH, fresh ? -BA_SZ - 40 : BA_Y);
+        lv_obj_set_style_opa(BA.box[i], LV_OPA_COVER, 0);
+        ba_paint(&BA.cv[i], hh, fresh);
+        lv_label_set_text_fmt(BA.lbl[i], "%u", (unsigned)hh);
+        lv_obj_set_style_text_color(BA.lbl[i], fresh ? C_PINK : C_TEXT3, 0);
+    }
+    for (int i = 0; i < BA_N - 1; i++) lv_obj_set_style_bg_color(BA.link[i], C_LINE2, 0);
+    // Zählwerk vorbereiten
+    fmt_plain(n1, sizeof(n1), old_h);
+    fmt_plain(n2, sizeof(n2), new_h);
+    int p = 0;
+    if (strlen(n1) == strlen(n2))
+        while (n1[p] && n1[p] == n2[p]) p++;
+    char pre[24];
+    memcpy(pre, n2, p);
+    pre[p] = 0;
+    lv_label_set_text(BA.pre, pre);
+    lv_label_set_text(BA.old_n, n1 + p);
+    lv_label_set_text(BA.new_n, n2 + p);
+    const lv_font_t *f = &font_g72;
+    int wp = p ? lv_txt_get_width(pre, strlen(pre), f, -BA_LS, LV_TEXT_FLAG_NONE) - BA_LS : 0;
+    int wn = lv_txt_get_width(n2 + p, strlen(n2 + p), f, -BA_LS, LV_TEXT_FLAG_NONE);
+    int wo = lv_txt_get_width(n1 + p, strlen(n1 + p), f, -BA_LS, LV_TEXT_FLAG_NONE);
+    int x0 = (W - wp - wn) / 2;
+    lv_obj_set_x(BA.pre, x0);
+    lv_obj_set_x(BA.num_box, x0 + wp);
+    lv_obj_set_width(BA.num_box, (wn > wo ? wn : wo) + 6);
+    lv_obj_set_style_text_color(BA.new_n, C_PINK, 0);
+    // Pool, Transaktionen, Belohnung, Uhrzeit
+    int o = snprintf(b, sizeof(b), "%s", pool && pool[0] ? pool : "Unbekannter Pool");
+    if (tx) {
+        fmt_de(n1, sizeof(n1), tx, 0);
+        o += snprintf(b + o, sizeof(b) - o, " · %s Transaktionen", n1);
+    }
+    if (reward > 0) {
+        fmt_de(n1, sizeof(n1), reward, 3);
+        snprintf(b + o, sizeof(b) - o, " · %s BTC", n1);
+    }
+    lv_label_set_text(BA.info, b);
+    b[0] = 0;
+    if (ts > 0 && net_time_valid()) {
+        time_t t = (time_t)ts;
+        struct tm tm;
+        localtime_r(&t, &tm);
+        strftime(b, sizeof(b), "%H:%M Uhr", &tm);
+    }
+    lv_label_set_text(BA.time, b);
+
+    lv_obj_clear_flag(BA.scr, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(BA.scr);
+    lv_disp_trig_activity(NULL); // weckt aus dem Nachtmodus
+    int lh = f->line_height;
+    ba_anim(BA.scr, ba_fade_out, LV_OPA_COVER, LV_OPA_TRANSP, 7600, 400, lv_anim_path_ease_in, false, ba_done);
+    ba_anim(BA.scr, ba_fade, LV_OPA_TRANSP, LV_OPA_COVER, 0, 220, NULL, true, NULL);
+    // 1. der neue Block fällt auf seinen Platz
+    ba_anim(BA.box[BA_N - 1], ba_y, -BA_SZ - 40, BA_Y, 350, 700, lv_anim_path_bounce, true, NULL);
+    // 2. Verbindung leuchtet auf, die Höhe rollt hoch
+    ba_anim(BA.link[BA_N - 2], ba_link, 0, 255, 1000, 1400, lv_anim_path_ease_out, false, NULL);
+    ba_anim(BA.old_n, ba_y, 0, -lh, 1050, 520, lv_anim_path_ease_out, true, NULL);
+    ba_anim(BA.new_n, ba_y, lh, 0, 1050, 520, lv_anim_path_ease_out, true, NULL);
+    // 3. die Kette rückt weiter, der älteste Block verschwindet links
+    for (int i = 0; i < BA_N; i++) {
+        int x = BA_X0 + i * BA_PITCH;
+        ba_anim(BA.box[i], ba_x, x, x - BA_PITCH, 3000, 650, NULL, false, NULL);
+    }
+    ba_anim(BA.box[0], ba_fade, LV_OPA_COVER, LV_OPA_TRANSP, 3000, 450, NULL, false, NULL);
+}
+
 // Preisalarm: einmal pro Überschreiten, erneut erst nach 0,5 % Rückkehr
 static void check_price_alarm(double px)
 {
@@ -1247,7 +1557,7 @@ static void check_price_alarm(double px)
 
 // ------------------------------------------------------------------ Einstellungen & Kartenmenü
 
-static lv_obj_t *s_cfg, *s_menu, *s_qr, *s_cfg_l1, *s_cfg_l2, *s_slider[2], *s_menu_tile[9];
+static lv_obj_t *s_cfg, *s_menu, *s_qr, *s_cfg_l1, *s_cfg_l2, *s_slider[2], *s_menu_tile[DECK_CARDS];
 static lv_obj_t *s_rot_val, *s_range_val, *s_upd_pill, *s_upd_lbl;
 
 // Update-Knopf oben rechts: „v1.4.2 · PRÜFEN“ sucht sofort, „UPDATE x →“ installiert
@@ -1526,11 +1836,11 @@ static void open_cfg(void)
     lv_obj_clear_flag(s_cfg, LV_OBJ_FLAG_HIDDEN);
 }
 
-static lv_obj_t *s_menu_sw[9], *s_menu_knob[9], *s_menu_name[9];
+static lv_obj_t *s_menu_sw[DECK_CARDS], *s_menu_knob[DECK_CARDS], *s_menu_name[DECK_CARDS];
 
 static void menu_refresh(void)
 {
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < DECK_CARDS; i++) {
         bool on = card_on(i);
         lv_obj_set_style_border_color(s_menu_tile[i], i == s_cur ? C_PINK : C_LINE, 0);
         lv_obj_set_style_text_color(s_menu_name[i], on ? C_TEXT : C_TEXT3, 0);
@@ -1634,18 +1944,20 @@ static void build_overlays(void)
     s_menu = rect(lv_scr_act(), 0, 0, W, H, C_BG);
     lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_EVENT_BUBBLE);
     const char *const *names = DECK_CARD_NAMES;
-    static const char *nums[9] = {"01", "02", "03", "04", "05", "06", "07", "08", "09"};
-    for (int i = 0; i < 9; i++) {
-        lv_obj_t *b = panel(s_menu, xs[i % 3], 14 + (i / 3) * 86, 144, 80);
+    // 3 Spalten × 4 Reihen
+    for (int i = 0; i < DECK_CARDS; i++) {
+        lv_obj_t *b = panel(s_menu, xs[i % 3], 12 + (i / 3) * 64, 144, 60);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x111111), LV_STATE_PRESSED);
-        txt(b, 144, &font_m12, C_TEXT3, nums[i], 'l', 12, 24);
-        s_menu_name[i] = txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 64);
+        char num[4];
+        snprintf(num, sizeof(num), "%02d", i + 1);
+        txt(b, 144, &font_m12, C_TEXT3, num, 'l', 12, 22);
+        s_menu_name[i] = txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 48);
         lv_obj_add_event_cb(b, menu_item_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         s_menu_tile[i] = b;
         // Schalter: Karte ein/aus
-        lv_obj_t *sw = rect(b, 144 - 12 - 34, 11, 34, 18, C_LINE);
+        lv_obj_t *sw = rect(b, 144 - 12 - 34, 9, 34, 18, C_LINE);
         lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, 0);
         lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(sw, LV_OBJ_FLAG_EVENT_BUBBLE);
@@ -1695,6 +2007,7 @@ static void ui_timer_cb(lv_timer_t *t)
     update_chart(d);
     update_network(d);
     update_miner(d);
+    update_cost(d);
     if (ticks % 10 == 0) update_age(d);
     data_unlock();
     if (ticks % 2 == 0) update_clock();
@@ -1718,10 +2031,11 @@ static void ui_timer_cb(lv_timer_t *t)
 // Screenshot-Modus: nach dem Laden der Live-Daten jede Karte (+ Einstellungen, Menü) über USB ausgeben
 static void bench_cb(lv_timer_t *t)
 {
-    static int idx = -1, wait = 0, row = -1, ticks = 0;
+    static int idx = -1, wait = 0, row = -1, ticks = 0, sid = 0;
     static lv_img_dsc_t *snap;
+    static const int ba_at[4] = {700, 1250, 1900, 3500}; // Block-Animation: Aufnahmezeitpunkte (ms)
     ticks++;
-    if (idx >= N_TILES + 2) return;
+    if (idx >= N_TILES + 2 + 4) return;
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
@@ -1732,10 +2046,26 @@ static void bench_cb(lv_timer_t *t)
         return;
     }
     if (row < 0) {
-        if (++wait < 20) return;
-        snap = lv_snapshot_take(lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
-        if (!snap) { printf("SNAPERR %d\n", idx); idx++; return; }
-        printf("\nSNAP %d %d %d\n", idx, (int)snap->header.w, (int)snap->header.h);
+        int k = idx - (N_TILES + 2);
+        if (k >= 0) { // Block-Animation jeweils neu starten und zum Zeitpunkt k aufnehmen
+            static int64_t t0;
+            int64_t now = esp_timer_get_time() / 1000;
+            if (wait++ == 0) {
+                data_lock();
+                deck_data_t *d = data_get();
+                uint32_t h = d->height ? d->height : 920000;
+                block_anim_show(h - 1, h, d->blocks_n ? d->blocks[0].pool : "", d->blocks_n ? d->blocks[0].tx_count : 0,
+                                d->blocks_n ? d->blocks[0].reward_btc : 0, d->blocks_n ? d->blocks[0].timestamp : 0);
+                data_unlock();
+                t0 = now;
+                return;
+            }
+            if (now - t0 < ba_at[k]) return;
+        } else if (++wait < 20) return;
+        sid = k >= 0 ? 30 + k : idx;
+        snap = lv_snapshot_take(k >= 0 ? BA.scr : lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
+        if (!snap) { printf("SNAPERR %d\n", sid); idx++; wait = 0; return; }
+        printf("\nSNAP %d %d %d\n", sid, (int)snap->header.w, (int)snap->header.h);
         row = 0;
     }
     static unsigned char out[480 * 2 * 8 * 4 / 3 + 8];
@@ -1746,7 +2076,7 @@ static void bench_cb(lv_timer_t *t)
         printf("R%d %s\n", row, out);
     }
     if (row >= (int)snap->header.h) {
-        printf("SNAPEND %d\n", idx);
+        printf("SNAPEND %d\n", sid);
         lv_snapshot_free(snap);
         snap = NULL;
         row = -1;
@@ -1755,7 +2085,8 @@ static void bench_cb(lv_timer_t *t)
         if (idx < N_TILES) car_jump(idx, false);
         else if (idx == N_TILES) open_cfg();
         else if (idx == N_TILES + 1) open_menu();
-        else overlay_close();
+        else if (idx == N_TILES + 2) overlay_close();
+        else if (idx == N_TILES + 2 + 4) ba_close();
     }
 }
 #elif defined(CONFIG_DECK_PERF_BENCH)
@@ -2006,9 +2337,11 @@ void ui_init(void)
     build_difficulty(tiles[5]);
     build_clock(tiles[6]);
     build_miner(tiles[7]);
-    build_lottery(tiles[8]);
+    build_cost(tiles[8]);
+    build_lottery(tiles[9]);
     if (!card_on(0)) car_jump(card_step(0, 1), false);
     build_overlays();
+    build_block_anim();
     toast_create();
     build_update_screen();
     build_boot();

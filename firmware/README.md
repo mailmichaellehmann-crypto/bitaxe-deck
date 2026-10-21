@@ -24,7 +24,8 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 6 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
 | 7 | Uhr | Uhrzeit, Wochentag, Datum |
 | 8 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
-| 9 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
+| 9 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt; Strompreis mit – / + direkt auf der Karte |
+| 10 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
 
 Gestaltung im Stil von Strike (eigener Code): tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen,
 Geist Mono für Beschriftungen, feine Rahmen, Punktmatrix-Chart, Pixel-Mosaik als Kursverlauf.
@@ -39,6 +40,26 @@ Nach jedem Start zeigt das Display einen Boot-Screen: Pixel-Mosaik in einer diag
 Schriftzug „Satoshi Deck“ und der echte Startvorgang (Display, WLAN, Bitaxe, Kurs, Block). Er bleibt
 stehen, bis alle Daten geladen sind (WLAN mit Uhrzeit, Bitaxe erreicht oder als offline erkannt, Kurs
 und Chart, Blockdaten), mindestens etwa 5 Sekunden und höchstens 45 Sekunden. Ein Tippen überspringt ihn.
+
+## Mining-Kosten
+
+Die Karte rechnet aus der aktuellen Leistung des Bitaxe (AxeOS-Wert `power`) die Kosten pro Tag,
+Monat (365/12 Tage) und Jahr hoch, jeweils mit den kWh dazu. Rechts oben steht der Strompreis
+(Standard **30 ct/kWh**), änderbar mit – / + auf der Karte (1 ct je Tipp) oder genau auf der
+Browser-Seite unter „Mining-Kosten“. Gerechnet wird in Euro, unabhängig von der Kurswährung;
+auch die sats pro Tag beziehen sich auf den Euro-Kurs.
+
+Der **Stromzähler** summiert die gemessene Leistung, solange der Bitaxe echte Werte liefert (nicht im
+Demo- oder Offline-Zustand), und zeigt „heute“ (ab Mitternacht) und „gesamt seit …“ mit den Kosten.
+Er wird alle 10 Minuten und vor jedem Neustart im Flash gesichert und lässt sich auf der Browser-Seite
+zurücksetzen.
+
+## Neuer Block
+
+Ist „Neuer Block“ eingeschaltet, erscheint bei jedem neuen Block für ein paar Sekunden eine Animation:
+Ein pinker Pixel-Block fällt in die Kette der letzten Blöcke, die Blockhöhe rollt wie ein Zählwerk
+auf den neuen Wert, darunter Pool, Transaktionen und Belohnung. Danach rückt die Kette einen Platz
+weiter. Ein Tippen schließt sie.
 
 ## Share-Lotterie
 
@@ -58,7 +79,7 @@ Netzwerk-Difficulty, also ein Block. Ohne erreichbaren Bitaxe wird die Verteilun
 - **Preisalarm** ein/aus – Grenzen oben/unten auf der Browser-Seite
 - **Seitenwechsel**: blättert automatisch weiter, wenn niemand das Display berührt (AUS, 5 s … 5 min)
 - **Nightmode**: dimmt im Zeitfenster (Standard 22–7 Uhr, im Browser änderbar); Berührung weckt
-- **Neuer Block**: kurzer Hinweis mit Blockhöhe und Pool
+- **Neuer Block**: Animation mit Blockhöhe, Pool und Transaktionen (siehe oben)
 - **Chart**: Zeitraum 24h / 7T / 30T / 1J
 - unten: Kartenmenü (Raster-Symbol), Helligkeit, Schließen (✕)
 

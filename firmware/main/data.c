@@ -16,6 +16,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "net.h"
+#include "nvs.h"
 #include "settings.h"
 
 static const char *TAG = "data";
@@ -316,6 +317,82 @@ int data_hist_copy(float *hash, float *temp, int max)
     return n;
 }
 
+// ------------------------------------------------------------------ Stromzähler
+
+typedef struct {
+    uint32_t ver;
+    uint32_t day;
+    double wh, day_wh;
+    int64_t since;
+} energy_blob_t;
+
+static bool s_energy_dirty;
+
+static void energy_load(void)
+{
+    nvs_handle_t h;
+    energy_blob_t e;
+    size_t len = sizeof(e);
+    if (nvs_open("deck", NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_get_blob(h, "energy", &e, &len) == ESP_OK && len == sizeof(e) && e.ver == 1) {
+        s_d.energy_wh = e.wh;
+        s_d.energy_day_wh = e.day_wh;
+        s_d.energy_day = e.day;
+        s_d.energy_since = e.since;
+    }
+    nvs_close(h);
+}
+
+void data_energy_save(void)
+{
+    data_lock();
+    energy_blob_t e = {.ver = 1, .day = s_d.energy_day, .wh = s_d.energy_wh, .day_wh = s_d.energy_day_wh, .since = s_d.energy_since};
+    s_energy_dirty = false;
+    data_unlock();
+    nvs_handle_t h;
+    if (nvs_open("deck", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_blob(h, "energy", &e, sizeof(e));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+void data_energy_reset(void)
+{
+    data_lock();
+    s_d.energy_wh = 0;
+    s_d.energy_day_wh = 0;
+    s_d.energy_since = net_time_valid() ? time(NULL) : 0;
+    data_unlock();
+    data_energy_save();
+}
+
+// Leistung über die Zeit aufsummieren (unter data_lock); watts < 0 = keine Messung, Lücke nicht zählen
+static void energy_add(double watts)
+{
+    static int64_t last_us = 0;
+    int64_t now = esp_timer_get_time();
+    if (net_time_valid()) {
+        time_t t = time(NULL);
+        struct tm tm;
+        localtime_r(&t, &tm);
+        uint32_t day = (tm.tm_year + 1900) * 10000 + (tm.tm_mon + 1) * 100 + tm.tm_mday;
+        if (day != s_d.energy_day) { // neuer Tag
+            s_d.energy_day = day;
+            s_d.energy_day_wh = 0;
+            s_energy_dirty = true;
+        }
+        if (!s_d.energy_since) s_d.energy_since = t;
+    }
+    if (watts >= 0 && watts < 5000 && last_us) {
+        double dt_h = (now - last_us) / 3.6e9;
+        if (dt_h > 30.0 / 3600) dt_h = 30.0 / 3600; // nach Aussetzern höchstens 30 s anrechnen
+        s_d.energy_wh += watts * dt_h;
+        s_d.energy_day_wh += watts * dt_h;
+        s_energy_dirty = true;
+    }
+    last_us = watts >= 0 ? now : 0;
+}
+
 // Simulierter Gamma 601 (BM1370) für Demo/Offline
 static void fill_demo(miner_t *m, int idx)
 {
@@ -395,6 +472,7 @@ static void fetch_bitaxe(void)
             m->mode = MINER_ONLINE;
             m->last_online = time(NULL);
             parse_miner(m, j);
+            if (n == 0) energy_add(m->power);
             if (n == 0) {
                 if (s_d.hist_demo) { s_d.hist_n = 0; s_d.hist_head = 0; s_d.hist_demo = false; }
                 static int64_t last_hist = 0;
@@ -409,6 +487,7 @@ static void fetch_bitaxe(void)
             m->mode = MINER_OFFLINE;
             strlcpy(m->err, err, sizeof(m->err));
             fill_demo(m, n);
+            if (n == 0) energy_add(-1);
         }
         data_unlock();
         cJSON_Delete(j);
@@ -435,6 +514,12 @@ static void miner_task(void *arg)
     for (;;) {
         int64_t t0 = esp_timer_get_time();
         fetch_bitaxe();
+        // Stromzähler alle 10 min sichern (schont den Flash)
+        static int64_t last_save = 0;
+        if (s_energy_dirty && t0 - last_save > 10 * 60 * 1000000LL) {
+            last_save = t0;
+            data_energy_save();
+        }
         int64_t left = 5000 - (esp_timer_get_time() - t0) / 1000;
         vTaskDelay(pdMS_TO_TICKS(left > 200 ? left : 200));
     }
@@ -484,6 +569,7 @@ void data_start(void)
     s_mtx = xSemaphoreCreateMutex();
     s_d.chart_range = (chart_range_t)g_settings.chart_range;
     s_d.hist_demo = true;
+    energy_load();
     // Demo-Verlauf vorbelegen, damit der Chart nie leer ist
     for (int i = 0; i < HIST_PTS; i++) {
         double t = i * 15.0;

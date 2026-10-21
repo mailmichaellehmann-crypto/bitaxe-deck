@@ -24,6 +24,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "board.h"
+#include "data.h"
 #include "net.h"
 #include "sdkconfig.h"
 #include "settings.h"
@@ -204,6 +205,7 @@ static void install(void)
     s_st.progress = 100;
     xSemaphoreGive(s_mtx);
     ESP_LOGI(TAG, "Update installiert, starte neu");
+    data_energy_save();
     vTaskDelay(pdMS_TO_TICKS(1500));
     esp_restart();
 }

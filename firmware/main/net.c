@@ -20,6 +20,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "data.h"
 #include "settings.h"
 #include "ota.h"
 
@@ -96,6 +97,10 @@ static esp_err_t root_get(httpd_req_t *req)
     for (int i = 0; i < DECK_CARDS; i++)
         cl += snprintf(cards + cl, sizeof(cards) - cl, "<label><input type=checkbox name=c%d value=1%s>%s</label>", i,
                        (g_settings.card_mask >> i) & 1 ? " checked" : "", DECK_CARD_NAMES[i]);
+    char ct[16];
+    float c = g_settings.kwh_price * 100.0f;
+    snprintf(ct, sizeof(ct), c == (int)c ? "%.0f" : "%.1f", c);
+    for (char *q = ct; *q; q++) if (*q == '.') *q = ',';
     snprintf(html, 12288,
              "%s<h1>Satoshi Deck</h1><p>Einstellungen für dein Display. <span class=acc>Speichern startet es neu.</span></p>"
              "<form method=post action=/save>"
@@ -114,6 +119,10 @@ static esp_err_t root_get(httpd_req_t *req)
              "<option value=0 %s>Punkte</option><option value=1 %s>Ohne Verlauf</option><option value=2 %s>Pixel</option></select>"
              "<label>Automatische Updates</label><select name=aupd>"
              "<option value=1 %s>Ein – nachts bzw. wenn niemand das Display benutzt</option><option value=0 %s>Aus</option></select>"
+             "<div class=sec>Mining-Kosten</div>"
+             "<label>Strompreis (ct/kWh)</label><input name=kwh_ct value='%s' inputmode=decimal maxlength=6>"
+             "<div class=cards style='grid-template-columns:1fr'><label><input type=checkbox name=ereset value=1>"
+             "Stromzähler zurücksetzen</label></div>"
              "<div class=sec>Karten</div><input type=hidden name=cards value=1><div class=cards>%s</div>"
              "<button>Speichern &rarr;</button></form>"
              "<div class=sec>Firmware</div>"
@@ -128,7 +137,7 @@ static esp_err_t root_get(httpd_req_t *req)
              settings_cur(), g_settings.alarm_hi, settings_cur(), g_settings.alarm_lo, g_settings.night_from, g_settings.night_to,
              g_settings.chart_style == 0 ? "selected" : "", g_settings.chart_style == 1 ? "selected" : "",
              g_settings.chart_style == 2 ? "selected" : "",
-             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", cards,
+             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, cards,
              deck_version(), ota_line, ota_btn);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, html);
@@ -157,7 +166,11 @@ static bool form_field(const char *body, const char *key, char *out, size_t len)
     return true;
 }
 
-static void restart_cb(void *arg) { esp_restart(); }
+static void restart_cb(void *arg)
+{
+    data_energy_save();
+    esp_restart();
+}
 
 static esp_err_t save_post(httpd_req_t *req)
 {
@@ -195,11 +208,12 @@ static esp_err_t save_post(httpd_req_t *req)
         }
         g_settings.card_mask = m ? m : DECK_CARDS_ALL; // mindestens eine Karte bleibt an
     }
-    if (form_field(body, "kwh", v, sizeof(v))) {
+    if (form_field(body, "kwh_ct", v, sizeof(v)) && v[0]) {
         for (char *c = v; *c; c++) if (*c == ',') *c = '.';
         float f = strtof(v, NULL);
-        if (f >= 0 && f < 10) g_settings.kwh_price = f;
+        if (f >= 0 && f <= 500) g_settings.kwh_price = f / 100.0f;
     }
+    if (form_field(body, "ereset", v, sizeof(v))) data_energy_reset();
     settings_save();
     ESP_LOGI(TAG, "Einstellungen gespeichert (SSID '%s', Bitaxe '%s')", g_settings.wifi_ssid, g_settings.bitaxe_host[0]);
 

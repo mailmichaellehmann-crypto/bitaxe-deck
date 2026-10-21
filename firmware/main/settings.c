@@ -6,7 +6,7 @@
 #include "esp_app_desc.h"
 
 deck_settings_t g_settings = {
-    .kwh_price = 0.35f,
+    .kwh_price = 0.30f,
     .rotate_s = 0,
     .night_from = 22,
     .night_to = 7,
@@ -17,7 +17,7 @@ deck_settings_t g_settings = {
     .card_mask = DECK_CARDS_ALL,
 };
 
-const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis", "USD / EUR", "Chart", "Block", "Gebühren", "Difficulty", "Uhr", "Bitaxe", "Lotterie"};
+const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis", "USD / EUR", "Chart", "Block", "Gebühren", "Difficulty", "Uhr", "Bitaxe", "Kosten", "Lotterie"};
 
 static const char *MINER_KEYS[DECK_MAX_MINERS] = {"bitaxe"};
 
@@ -46,7 +46,10 @@ void settings_load(void)
     get_str(h, "ssid", g_settings.wifi_ssid, sizeof(g_settings.wifi_ssid));
     get_str(h, "pass", g_settings.wifi_pass, sizeof(g_settings.wifi_pass));
     for (int i = 0; i < DECK_MAX_MINERS; i++) get_str(h, MINER_KEYS[i], g_settings.bitaxe_host[i], sizeof(g_settings.bitaxe_host[i]));
-    get_u32f(h, "kwh", &g_settings.kwh_price, 1000.0f);
+    // Strompreis: neuer Schlüssel; vom alten nur selbst gesetzte Werte übernehmen (0,35 war der frühere Standard)
+    uint32_t k;
+    if (nvs_get_u32(h, "kwh2", &k) == ESP_OK) g_settings.kwh_price = k / 1000.0f;
+    else if (nvs_get_u32(h, "kwh", &k) == ESP_OK && k != 350) g_settings.kwh_price = k / 1000.0f;
     get_u32f(h, "al_hi", &g_settings.alarm_hi, 1.0f);
     get_u32f(h, "al_lo", &g_settings.alarm_lo, 1.0f);
     uint8_t b;
@@ -62,7 +65,13 @@ void settings_load(void)
     get_u8(h, "cstyle", &g_settings.chart_style);
     uint16_t r;
     if (nvs_get_u16(h, "rot", &r) == ESP_OK) g_settings.rotate_s = r;
-    if (nvs_get_u16(h, "cards", &r) == ESP_OK) g_settings.card_mask = r & DECK_CARDS_ALL;
+    if (nvs_get_u16(h, "cards", &r) == ESP_OK) {
+        uint8_t n = 9;
+        get_u8(h, "cardsn", &n);
+        // ältere Firmware mit 9 Karten: „Kosten“ kommt neu an Platz 8 (an), Lotterie rückt auf 9
+        if (n < 10) r = (r & 0xFF) | (((r >> 8) & 1) << 9) | (1u << 8);
+        g_settings.card_mask = r & DECK_CARDS_ALL;
+    }
     if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;
     nvs_close(h);
     if (g_settings.chart_range > 3) g_settings.chart_range = 0;
@@ -77,7 +86,7 @@ void settings_save(void)
     nvs_set_str(h, "ssid", g_settings.wifi_ssid);
     nvs_set_str(h, "pass", g_settings.wifi_pass);
     for (int i = 0; i < DECK_MAX_MINERS; i++) nvs_set_str(h, MINER_KEYS[i], g_settings.bitaxe_host[i]);
-    nvs_set_u32(h, "kwh", (uint32_t)(g_settings.kwh_price * 1000.0f + 0.5f));
+    nvs_set_u32(h, "kwh2", (uint32_t)(g_settings.kwh_price * 1000.0f + 0.5f));
     nvs_set_u32(h, "al_hi", (uint32_t)(g_settings.alarm_hi + 0.5f));
     nvs_set_u32(h, "al_lo", (uint32_t)(g_settings.alarm_lo + 0.5f));
     nvs_set_u8(h, "cur", g_settings.currency);
@@ -92,6 +101,7 @@ void settings_save(void)
     nvs_set_u8(h, "cstyle", g_settings.chart_style);
     nvs_set_u16(h, "rot", g_settings.rotate_s);
     nvs_set_u16(h, "cards", g_settings.card_mask);
+    nvs_set_u8(h, "cardsn", DECK_CARDS);
     nvs_commit(h);
     nvs_close(h);
 }

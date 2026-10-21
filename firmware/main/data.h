@@ -76,6 +76,12 @@ typedef struct {
     bool hist_demo; // true = simulierter Verlauf
     float hist_hash[HIST_PTS], hist_temp[HIST_PTS];
     uint32_t hist_ver;
+
+    // Stromzähler des Bitaxe: zählt, solange echte Messwerte kommen (gespeichert im NVS)
+    double energy_wh;      // gesamt seit energy_since
+    double energy_day_wh;  // heute
+    int64_t energy_since;  // Unix-Sekunden, 0 = Uhrzeit noch unbekannt
+    uint32_t energy_day;   // Datum von energy_day_wh als JJJJMMTT
 } deck_data_t;
 
 void data_start(void);
@@ -84,3 +90,5 @@ void data_unlock(void);
 deck_data_t *data_get(void); // nur zwischen data_lock/unlock lesen
 void data_request_chart(chart_range_t r);
 int data_hist_copy(float *hash, float *temp, int max); // gibt Anzahl zurück
+void data_energy_save(void);  // Stromzähler sofort sichern (z. B. vor einem Neustart)
+void data_energy_reset(void); // Stromzähler auf 0 setzen
