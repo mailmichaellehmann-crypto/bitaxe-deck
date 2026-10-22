@@ -69,12 +69,14 @@ Ist in den Einstellungen „Neuer Block“ eingeschaltet, springt das Display da
 ## Halving
 
 Die ganze Karte ist ein Feld aus Pixel-Sand und steht für die laufende Halving-Epoche (210.000
-Blöcke, eine Zelle ≈ 88 Blöcke). Unten liegen die schon geschürften Blöcke als Sand mit flachen
-Dünen, der freie Raum darüber sind die restlichen bis zum Halving. Körner rieseln ständig herab;
-bei jedem neuen Block fällt ein pinkes Korn und bleibt als neuestes oben liegen. Groß stehen die
-Blöcke bis zum Halving, darunter Zielblock, geschätztes Datum (aus der mittleren Blockzeit von
-mempool.space) und die Tage bis dahin, oben rechts die Blockbelohnung vorher → nachher. Hinter
-den Beschriftungen bleiben die Zellen ausgespart, damit alles auch über dem Sand lesbar ist.
+Blöcke, eine Zelle ≈ 88 Blöcke). Unten liegen die schon geschürften Blöcke als Sand mit gerader
+Kante: volle Reihen, die oberste füllt sich von links nach rechts, an der Stufe liegt das neueste
+Korn in Pink. Der freie Raum darüber sind die restlichen Blöcke bis zum Halving. Körner rieseln
+ständig herab; bei jedem neuen Block fällt ein pinkes Korn auf die Stufe. Groß stehen die Blöcke
+bis zum Halving, knapp unter der Kante der Anteil der Epoche, unten Zielblock, geschätztes Datum
+(aus der mittleren Blockzeit von mempool.space) und die Tage bis dahin, oben rechts die
+Blockbelohnung vorher → nachher. Die Beschriftungen liegen so, dass die Kante frei bleibt; hinter
+ihnen sind die Zellen ausgespart.
 
 ## Pixel-Uhr
 
@@ -84,7 +86,7 @@ abdeckt, Randzellen bekommen Zwischenstufen – dadurch wirken die Ziffern glatt
 ganze Breite und sind nur wenig gestreckt (Faktor 1,15, rund 135 px hoch). Zu jeder neuen Minute fallen die
 Zellen, die erlöschen, nach unten heraus, und die neuen fallen von oben auf ihren Platz. Der
 Doppelpunkt blinkt pink im Sekundentakt, ganz unten füllt sich eine Reihe aus 60 Zellen – eine pro
-Sekunde. Darunter steht das Datum. Auf der Browser-Seite lässt sich unter „Uhr“ auch die klassische
+Sekunde. Darüber steht mit etwas Abstand das Datum. Auf der Browser-Seite lässt sich unter „Uhr“ auch die klassische
 Anzeige wählen.
 
 ## Nachtmodus

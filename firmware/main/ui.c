@@ -910,12 +910,11 @@ static void pc_geom(float stretch)
     if (PC.cols > PC_MAXW) PC.cols = PC_MAXW;
     if (PC.rows > PC_MAXH) PC.rows = PC_MAXH;
     PC.c0 = (PC_COLS - PC.cols) / 2;
-    // Uhrzeit und Datum zusammen mittig über der Sekundenreihe
-    int group = PC.rows * PC_CELL + 46;
-    PC.r0 = (PC_SEC_ROW * PC_CELL - group) / 2 / PC_CELL;
+    // Datum knapp über der Sekundenreihe, die Uhrzeit mit deutlichem Abstand darüber
+    int date_base = PC_SEC_ROW * PC_CELL - 28;
+    PC.r0 = (date_base - 54) / PC_CELL - PC.rows;
     if (PC.r0 < 1) PC.r0 = 1;
-    if (PC.date)
-        lv_obj_align(PC.date, LV_ALIGN_TOP_MID, 0, (PC.r0 + PC.rows) * PC_CELL + 30 - ascent(&font_m16));
+    if (PC.date) lv_obj_align(PC.date, LV_ALIGN_TOP_MID, 0, date_base - ascent(&font_m16));
     PC.ox = PC.c0 * PC_CELL + (PC.cols * PC_CELL - fw * PC.sx) / 2;
     PC.oy = PC.r0 * PC_CELL + (PC.rows * PC_CELL - fh * PC.sy) / 2;
     uint32_t cc[5] = {' ', ' ', ':', ' ', ' '};
@@ -1239,24 +1238,15 @@ static void hg_draw(void)
     lv_obj_invalidate(c->cv);
 }
 
-// Sandhöhen aus dem Fortschritt der Epoche, mit flachen Dünen
+// Sandhöhen aus dem Fortschritt der Epoche: volle Reihen, die oberste von links nach rechts gefüllt –
+// eine gerade Kante mit einer Stufe; das neueste Korn liegt an der Stufe
 static void hg_heights(uint32_t height)
 {
     int total = HG_COLS * (HG_ROWS - HG_FREE), fill = (int)((double)total * (height % 210000) / 210000 + 0.5);
-    float mean = fill / (float)HG_COLS;
-    int sum = 0;
-    for (int q = 0; q < HG_COLS; q++) {
-        float v = mean + 1.4f * sinf(q * 0.19f + 0.7f) + 0.7f * sinf(q * 0.47f + 2.1f);
-        int hc = (int)lroundf(v);
-        hc = hc < 0 ? 0 : hc > HG_ROWS - HG_FREE ? HG_ROWS - HG_FREE : hc;
-        HG.colh[q] = hc;
-        sum += hc;
-    }
-    for (int k = 0, d = fill - sum; d && k < 4000; k++) { // Rest so verteilen, dass die Menge stimmt
-        int q = (k * 37) % HG_COLS;
-        if (d > 0 && HG.colh[q] < HG_ROWS - HG_FREE) { HG.colh[q]++; d--; }
-        else if (d < 0 && HG.colh[q] > 0) { HG.colh[q]--; d++; }
-    }
+    int full = fill / HG_COLS, rem = fill % HG_COLS;
+    for (int q = 0; q < HG_COLS; q++) HG.colh[q] = full + (q < rem ? 1 : 0);
+    HG.pink_col = rem > 0 ? rem - 1 : HG_COLS - 1;
+    HG.drop_col = rem < HG_COLS ? rem : 0; // hier landet das nächste Korn
 }
 
 static void hg_grain_go(lv_obj_t *g, int delay);
@@ -1283,15 +1273,13 @@ static void hg_grain_go(lv_obj_t *g, int delay)
 static void hg_drop_ready(lv_anim_t *a)
 {
     lv_obj_add_flag(HG.drop, LV_OBJ_FLAG_HIDDEN);
-    HG.pink_col = HG.drop_col;
     hg_draw();
 }
 
 // neuer Block: ein pinkes Korn fällt und bleibt als neuestes oben auf dem Sand liegen
 static void hg_drop(void)
 {
-    int q = rand() % HG_COLS;
-    HG.drop_col = q;
+    int q = HG.drop_col;
     lv_obj_set_pos(HG.drop, q * HG_CELL, -HG_CELL);
     lv_obj_clear_flag(HG.drop, LV_OBJ_FLAG_HIDDEN);
     lv_anim_t a;
@@ -1320,7 +1308,6 @@ static void build_halving(lv_obj_t *t)
     HG.num = tight(txt(t, W, &font_g96, C_TEXT, "–", 'l', MX - 5, 120), 4);
     HG.sub = txt(t, W, &font_m14, C_TEXT2, "", 'l', MX, 146);
     HG.pct = txt(t, W, &font_m14, C_PINK, "", 'r', W - MX, 300);
-    HG.pink_col = HG_COLS / 2;
     for (int i = 0; i < HG_GRAINS; i++) hg_grain_go(HG.grain[i], i * 450);
 }
 
@@ -1356,11 +1343,16 @@ static void update_halving(deck_data_t *d)
     snprintf(b, sizeof(b), "%s %% der Epoche geschürft", n);
     lv_label_set_text(HG.pct, b);
     hg_heights(h);
-    // Prozentangabe knapp über dem Sand, aber nicht in die Zeilen darüber
-    int sy = H - (int)((HG_ROWS - HG_FREE) * (h % 210000) / 210000.0 * HG_CELL) - 22;
-    if (sy < 176) sy = 176;
-    if (sy > 300) sy = 300;
-    lv_obj_align(HG.pct, LV_ALIGN_TOP_RIGHT, -MX, sy - (font_m14.line_height - font_m14.base_line));
+    // Beschriftungen so legen, dass die Kante des Sands frei bleibt
+    int asc14 = font_m14.line_height - font_m14.base_line;
+    int full = HG.colh[HG_COLS - 1], top_full = H - full * HG_CELL;   // Oberkante der vollen Reihen
+    int top_part = H - HG.colh[0] * HG_CELL;                          // Oberkante der angefangenen Reihe
+    int sub_base = 146;                                               // unter der großen Zahl …
+    if (sub_base + 10 > top_part) sub_base = H - 14;                  // … oder ganz unten im Sand
+    lv_obj_align(HG.sub, LV_ALIGN_TOP_LEFT, MX, sub_base - asc14);
+    int pct_base = top_full + 26;                                     // knapp unter der Kante im Sand
+    if (pct_base > H - 34) pct_base = top_part - 12;                  // wenig Sand: darüber
+    lv_obj_align(HG.pct, LV_ALIGN_TOP_RIGHT, -MX, pct_base - asc14);
     hg_draw();
 }
 
