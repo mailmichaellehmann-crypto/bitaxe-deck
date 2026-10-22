@@ -80,8 +80,8 @@ den Beschriftungen bleiben die Zellen ausgespart, damit alles auch über dem San
 
 Die Uhrzeit besteht aus Mosaik-Zellen auf einem schwachen Raster über den ganzen Bildschirm. Die
 Ziffern stammen aus der Schrift Geist: Für jede 8-px-Zelle wird berechnet, wie viel des Zeichens sie
-abdeckt, Randzellen bekommen Zwischenstufen – dadurch wirken die Ziffern glatt. Sie sind leicht in
-die Höhe gestreckt und nutzen die ganze Breite (rund 170 px hoch). Zu jeder neuen Minute fallen die
+abdeckt, Randzellen bekommen Zwischenstufen – dadurch wirken die Ziffern glatt. Sie nutzen die
+ganze Breite und sind nur wenig gestreckt (Faktor 1,15, rund 135 px hoch). Zu jeder neuen Minute fallen die
 Zellen, die erlöschen, nach unten heraus, und die neuen fallen von oben auf ihren Platz. Der
 Doppelpunkt blinkt pink im Sekundentakt, ganz unten füllt sich eine Reihe aus 60 Zellen – eine pro
 Sekunde. Darunter steht das Datum. Auf der Browser-Seite lässt sich unter „Uhr“ auch die klassische

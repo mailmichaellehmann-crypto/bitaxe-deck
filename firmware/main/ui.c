@@ -822,6 +822,7 @@ static void build_difficulty(lv_obj_t *t)
 #define PC_SEC_ROW 37                     // Sekundenreihe
 #define PC_ANIM 1100                      // Dauer des Umrieselns (ms)
 #define PC_FONT (&font_g120)
+#define PC_STRETCH 1.15f                  // Streckung in die Höhe (1 = Originalproportionen)
 static canvas8_t PCC;
 static struct {
     lv_obj_t *tile, *date;
@@ -888,7 +889,7 @@ static void pc_layout(uint8_t *out, int hh, int mm)
 }
 
 // Lage und Maßstab einmal berechnen: so breit wie der Bildschirm, leicht in die Höhe gestreckt
-static void pc_geom(void)
+static void pc_geom(float stretch)
 {
     lv_font_glyph_dsc_t g;
     PC.slot = 0;
@@ -902,14 +903,19 @@ static void pc_geom(void)
     PC.top = asc - g.box_h - g.ofs_y; // Oberkante der Ziffern in Zeilenkoordinaten
     int fw = 4 * PC.slot + PC.colw + 4 * PC.track, fh = g.box_h;
     PC.sx = (PC_MAXW - 2) * PC_CELL / (float)fw;
-    PC.sy = PC.sx * 1.45f;
+    PC.sy = PC.sx * stretch;
     if (fh * PC.sy > (PC_MAXH - 2) * PC_CELL) PC.sy = (PC_MAXH - 2) * PC_CELL / (float)fh;
     PC.cols = (int)(fw * PC.sx / PC_CELL) + 2;
     PC.rows = (int)(fh * PC.sy / PC_CELL) + 2;
     if (PC.cols > PC_MAXW) PC.cols = PC_MAXW;
     if (PC.rows > PC_MAXH) PC.rows = PC_MAXH;
     PC.c0 = (PC_COLS - PC.cols) / 2;
-    PC.r0 = 2 + (31 - PC.rows) / 2;
+    // Uhrzeit und Datum zusammen mittig über der Sekundenreihe
+    int group = PC.rows * PC_CELL + 46;
+    PC.r0 = (PC_SEC_ROW * PC_CELL - group) / 2 / PC_CELL;
+    if (PC.r0 < 1) PC.r0 = 1;
+    if (PC.date)
+        lv_obj_align(PC.date, LV_ALIGN_TOP_MID, 0, (PC.r0 + PC.rows) * PC_CELL + 30 - ascent(&font_m16));
     PC.ox = PC.c0 * PC_CELL + (PC.cols * PC_CELL - fw * PC.sx) / 2;
     PC.oy = PC.r0 * PC_CELL + (PC.rows * PC_CELL - fh * PC.sy) / 2;
     uint32_t cc[5] = {' ', ' ', ':', ' ', ' '};
@@ -1044,7 +1050,7 @@ static void build_clock(lv_obj_t *t)
     canvas8_create(&PCC, t, 0, 0, W, H);
     PC.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, 276);
     lv_obj_set_style_text_letter_space(PC.date, 2, 0);
-    pc_geom();
+    pc_geom(PC_STRETCH);
     PC.shown = -2;
     PC.sec = -1;
     lv_timer_create(pc_tick, 40, NULL);
@@ -2551,8 +2557,9 @@ static void bench_cb(lv_timer_t *t)
     static lv_img_dsc_t *snap;
     static const int ba_at[4] = {700, 1250, 1900, 3500}; // Block-Animation: Aufnahmezeitpunkte (ms)
     static const int pc_at[2] = {450, 800}; // Pixel-Uhr: Aufnahmen während des Umrieselns (ms)
+    static const float pc_k[4] = {1.0f, 1.15f, 1.3f, 1.45f}; // Pixel-Uhr: Streckungen zum Vergleich
     ticks++;
-    if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS + 2) return;
+    if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS + 2 + 4) return;
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
@@ -2564,7 +2571,16 @@ static void bench_cb(lv_timer_t *t)
     }
     if (row < 0) {
         int k = idx - (N_TILES + 2);
-        if (k >= 4 + NIGHT_COLORS) { // Pixel-Uhr: 12:59 → 13:00 umrieseln
+        if (k >= 4 + NIGHT_COLORS + 2) { // Pixel-Uhr in verschiedenen Streckungen
+            if (wait++ == 0) {
+                car_jump(8, false);
+                pc_geom(pc_k[k - 4 - NIGHT_COLORS - 2]);
+                PC.anim_t0 = 0;
+                PC.shown = -2;
+                return;
+            }
+            if (wait < 12) return;
+        } else if (k >= 4 + NIGHT_COLORS) { // Pixel-Uhr: 12:59 → 13:00 umrieseln
             static int64_t t0;
             int64_t now = esp_timer_get_time() / 1000;
             if (wait++ == 0) {
@@ -2599,7 +2615,11 @@ static void bench_cb(lv_timer_t *t)
             }
             if (now - t0 < ba_at[k]) return;
         } else if (++wait < 20) return;
-        sid = k >= 4 + NIGHT_COLORS ? 60 + k - 4 - NIGHT_COLORS : k >= 4 ? 50 + k - 4 : k >= 0 ? 30 + k : idx;
+        sid = k >= 4 + NIGHT_COLORS + 2 ? 70 + k - 4 - NIGHT_COLORS - 2
+            : k >= 4 + NIGHT_COLORS     ? 60 + k - 4 - NIGHT_COLORS
+            : k >= 4                    ? 50 + k - 4
+            : k >= 0                    ? 30 + k
+                                        : idx;
         snap = snap_take(lv_scr_act());
         if (!snap) { printf("SNAPERR %d\n", sid); idx++; wait = 0; return; }
         if (k >= 4 && k < 4 + NIGHT_COLORS) {
