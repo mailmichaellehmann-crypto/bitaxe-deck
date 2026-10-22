@@ -38,7 +38,7 @@ aber nicht erreichbar, steht dort **OFFLINE** in Rot, mit dem Grund; auch dann l
 
 ## Boot-Screen
 
-Nach jedem Start zeigt das Display einen Boot-Screen: Pixel fallen von oben und stapeln sich zum Mosaik,
+Nach jedem Start zeigt das Display einen Boot-Screen: Pixel fallen von oben und bilden ein Mosaik-Band am oberen Rand,
 Schriftzug „Satoshi Deck“ und der echte Startvorgang (Display, WLAN, Bitaxe, Kurs, Block). Er bleibt
 stehen, bis alle Daten geladen sind (WLAN mit Uhrzeit, Bitaxe erreicht oder als offline erkannt, Kurs
 und Chart, Blockdaten), mindestens etwa 5 Sekunden und höchstens 45 Sekunden. Ein Tippen überspringt ihn.

@@ -2344,8 +2344,10 @@ static void bench_cb(lv_timer_t *t)
 // Startvorgang (Display, WLAN, Bitaxe, Kurs, Block). Ein Tippen überspringt ihn.
 #define BOOT_MAX_MS 45000 // höchstens so lange, falls etwas nicht lädt
 #define BC 8 // Mosaik-Zelle
+#define BOOT_BAND 11                                 // Reihen des Mosaiks oben (darunter der Text)
 #define BOOT_FALL 480                                // Fallzeit einer Zelle (ms)
-#define BOOT_FALL_END (40 * 34 + 420 + BOOT_FALL)    // bis dahin sind alle gelandet
+#define BOOT_STEP 60                                 // Versatz je Reihe: die unteren landen zuerst
+#define BOOT_FALL_END ((BOOT_BAND + 1) * BOOT_STEP + 420 + BOOT_FALL) // bis dahin sind alle gelandet
 static struct {
     lv_obj_t *scr, *word, *sub, *ver, *row_v[5], *row_d[5], *cells[55];
     canvas_t mos;
@@ -2404,7 +2406,7 @@ static void boot_tick(lv_timer_t *t)
             for (int c = 0; c < cols; c++) {
                 int i = r * cols + c;
                 if (!BS.target[i]) continue;
-                int start = (rows - 1 - r) * 34 + (int)(hash2(c, r) % 420);
+                int start = (BOOT_BAND - r) * BOOT_STEP + (int)(hash2(c, r) % 420);
                 if (ms < start) continue;
                 float p = (ms - start) / (float)BOOT_FALL;
                 if (p > 1) p = 1;
@@ -2413,13 +2415,27 @@ static void boot_tick(lv_timer_t *t)
                 BS.cur[i] = p >= 1 ? BS.target[i] : 0;
             }
         lv_obj_invalidate(BS.mos.cv);
-    } else
+    } else {
+        // Ende des Falls: einmal das fertige Mosaik zeichnen (falls Bilder ausgefallen sind)
+        static bool landed = false;
+        if (!landed) {
+            landed = true;
+            lv_canvas_fill_bg(BS.mos.cv, C_BG, LV_OPA_COVER);
+            for (int i = 0; i < cols * rows; i++) {
+                BS.cur[i] = BS.target[i];
+                if (BS.target[i])
+                    fill_box(&BS.mos, (i % cols) * BC, (i / cols) * BC, BC - 1, BC - 1,
+                             BS.target[i] == 255 ? C_PINK : gray(BS.target[i]));
+            }
+            dirty = true;
+        }
+    }
     // danach leichtes Flackern
+    if (ms >= BOOT_FALL_END + 66)
     for (int r = 0; r < rows; r++)
         for (int c = 0; c < cols; c++) {
             int i = r * cols + c;
-            int start = ((cols - c) + (rows - r)) * 22 + (int)(hash2(c, r) % 260);
-            int want = ms < start ? 0 : BS.target[i];
+            int want = BS.target[i];
             if (ms > 3500 && BS.target[i] && (hash2(c * 7 + (int)(ms / 180), r) % 97) == 0) want = BS.target[i] / 3; // Flackern
             int v = BS.cur[i];
             if (v != want) {
@@ -2519,14 +2535,14 @@ static void build_boot(void)
     lv_obj_clear_flag(BS.scr, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_event_cb(BS.scr, boot_tap_cb, LV_EVENT_CLICKED, NULL);
     canvas_create(&BS.mos, BS.scr, 0, 0, W, H);
-    // Zielbild: wie der Strike-Hintergrund rechts dichter und heller, links frei für den Text
+    // Zielbild: ein Band oben, ganz oben dicht und hell, nach unten ausfransend; darunter der Text
     for (int r = 0; r < 40; r++)
         for (int c = 0; c < 60; c++) {
             uint32_t h = hash2(c + 101, r + 37);
-            float x = c / 59.0f, y = r / 39.0f;
-            float dens = x * x * 1.25f - (y > 0.55f && x < 0.75f ? 0.6f : 0) - (y < 0.62f && y > 0.28f && x < 0.62f ? 0.7f : 0);
+            float x = c / 59.0f, y = r / (float)BOOT_BAND; // y: 0 = oben … 1 = Unterkante des Bands
+            float dens = r > BOOT_BAND ? 0 : 1.25f - y * 1.25f + 0.12f * sinf(x * 9.0f + 1.3f);
             int v = 0;
-            if ((h % 1000) / 1000.0f < dens) v = 0x14 + (int)((h >> 10) % 0x30) + (int)(x * 0x20);
+            if ((h % 1000) / 1000.0f < dens) v = 0x14 + (int)((h >> 10) % 0x30) + (int)((1 - y) * 0x24);
             if (v && (h % 61) == 0) v = 255; // vereinzelte pinke Zellen
             BS.target[r * 60 + c] = v;
         }
