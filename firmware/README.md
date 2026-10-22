@@ -24,7 +24,7 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 6 | Halving | Vollbild aus Pixel-Sand: unten die schon geschürften Blöcke der Epoche, darüber die restlichen; Blöcke bis zum Halving groß, Zielblock, geschätztes Datum, Belohnung vorher/nachher |
 | 7 | Blockzeit & Gebühren | Blockhöhe, Sats pro USD, Gebühren niedrig/mittel/hoch in sat/vB und $ |
 | 8 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
-| 9 | Uhr | Pixel-Uhr (Standard): Ziffern aus Mosaik-Zellen, zu jeder Minute rieseln die Zellen um, Doppelpunkt blinkt pink, Sekundenreihe; darunter Wochentag und Datum. Wahlweise klassisch |
+| 9 | Uhr | Pixel-Uhr (Standard): große Ziffern aus Mosaik-Zellen, zu jeder Minute rieseln die Zellen um, Doppelpunkt blinkt pink, Sekundenreihe; darunter das Datum. Wahlweise klassisch |
 | 10 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
 | 11 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
 | 12 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
@@ -78,11 +78,14 @@ den Beschriftungen bleiben die Zellen ausgespart, damit alles auch über dem San
 
 ## Pixel-Uhr
 
-Die Uhrzeit besteht aus Mosaik-Zellen auf einem schwachen Raster über den ganzen Bildschirm (Ziffern
-in 5 × 7-Pixelschrift, jedes Schriftpixel aus 2 × 2 Zellen). Zu jeder neuen Minute fallen die
+Die Uhrzeit besteht aus Mosaik-Zellen auf einem schwachen Raster über den ganzen Bildschirm. Die
+Ziffern stammen aus der Schrift Geist: Für jede 8-px-Zelle wird berechnet, wie viel des Zeichens sie
+abdeckt, Randzellen bekommen Zwischenstufen – dadurch wirken die Ziffern glatt. Sie sind leicht in
+die Höhe gestreckt und nutzen die ganze Breite (rund 170 px hoch). Zu jeder neuen Minute fallen die
 Zellen, die erlöschen, nach unten heraus, und die neuen fallen von oben auf ihren Platz. Der
 Doppelpunkt blinkt pink im Sekundentakt, ganz unten füllt sich eine Reihe aus 60 Zellen – eine pro
-Sekunde. Auf der Browser-Seite lässt sich unter „Uhr“ auch die klassische Anzeige wählen.
+Sekunde. Darunter steht das Datum. Auf der Browser-Seite lässt sich unter „Uhr“ auch die klassische
+Anzeige wählen.
 
 ## Nachtmodus
 

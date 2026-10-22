@@ -15,6 +15,7 @@
 #include "board.h"
 #include "data.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "lvgl.h"
 #include "net.h"
@@ -260,9 +261,10 @@ static void fill_box(canvas_t *c, int x, int y, int w, int h, lv_color_t col)
 }
 
 // 8-Bit-Leinwand mit Grau-Palette für bildschirmfüllende Mosaike (halber Speicher):
-// Index = Grauwert 0 … 253, PX_PINK_DIM und PX_PINK für die Akzentfarbe
-#define PX_PINK_DIM 254
+// Index = Grauwert 0 … 239, darüber 16 Stufen Pink (PX_PINK0 = schwach … PX_PINK = voll)
+#define PX_PINK0 240
 #define PX_PINK 255
+#define PX_PINK_DIM (PX_PINK0 + 7)
 typedef struct {
     lv_obj_t *cv;
     void *buf;
@@ -277,9 +279,8 @@ static void canvas8_create(canvas8_t *c, lv_obj_t *parent, int x, int y, int w, 
     c->buf = heap_caps_malloc(LV_CANVAS_BUF_SIZE_INDEXED_8BIT(w, h), MALLOC_CAP_SPIRAM);
     c->cv = lv_canvas_create(parent);
     lv_canvas_set_buffer(c->cv, c->buf, w, h, LV_IMG_CF_INDEXED_8BIT);
-    for (int i = 0; i < PX_PINK_DIM; i++) lv_canvas_set_palette(c->cv, i, lv_color_make(i, i, i));
-    lv_canvas_set_palette(c->cv, PX_PINK_DIM, C_PINK_DIM);
-    lv_canvas_set_palette(c->cv, PX_PINK, C_PINK);
+    for (int i = 0; i < PX_PINK0; i++) lv_canvas_set_palette(c->cv, i, lv_color_make(i, i, i));
+    for (int i = 0; i < 16; i++) lv_canvas_set_palette(c->cv, PX_PINK0 + i, lv_color_mix(C_PINK, C_BG, (uint8_t)(32 + i * 223 / 15)));
     c->px = (uint8_t *)c->buf + 4 * 256;
     memset(c->px, 0, w * h);
     lv_obj_set_pos(c->cv, x, y);
@@ -297,7 +298,7 @@ static void fill8(canvas8_t *c, int x, int y, int w, int h, uint8_t v)
     for (int yy = y; yy < y + h; yy++) memset(c->px + yy * c->w + x, v, w);
 }
 
-static uint8_t g8(int v) { return v < 0 ? 0 : v > 253 ? 253 : v; } // Grauwert als Index
+static uint8_t g8(int v) { return v < 0 ? 0 : v >= PX_PINK0 ? PX_PINK0 - 1 : v; } // Grauwert als Index
 
 static uint32_t hash2(int a, int b)
 {
@@ -809,60 +810,119 @@ static void build_difficulty(lv_obj_t *t)
 }
 
 // ---- 6 Uhr: klassisch oder als Pixel-Uhr
-// Pixel-Uhr: Ziffern aus Mosaik-Zellen (5 × 7-Schrift, ein Schriftpixel = 2 × 2 Zellen à 8 px) auf
-// einem schwachen Zellraster. Zu jeder neuen Minute fallen die erloschenen Zellen heraus und die
-// neuen von oben auf ihren Platz. Doppelpunkt blinkt pink, unten füllt sich eine Sekundenreihe.
+// Pixel-Uhr: die Ziffern der Schrift Geist werden auf ein Raster aus 8-px-Zellen gerechnet (Abdeckung
+// je Zelle, Ränder in Zwischenstufen – dadurch glatt), leicht gestreckt und so groß wie möglich.
+// Zu jeder Minute fallen erlöschende Zellen heraus und neue von oben auf ihren Platz. Der Doppelpunkt
+// blinkt pink, unten füllt sich eine Sekundenreihe; darunter das Datum.
 #define PC_CELL 8
 #define PC_COLS (W / PC_CELL)             // 60
 #define PC_ROWS (H / PC_CELL)             // 40
-#define PC_C0 5                           // erste Spalte der Ziffern
-#define PC_R0 6                           // erste Reihe der Ziffern
-#define PC_W 50                           // Breite der Anzeige in Zellen
-#define PC_H 14                           // Höhe der Ziffern in Zellen
+#define PC_MAXW 58                        // größte Breite der Zeitanzeige (Zellen)
+#define PC_MAXH 28                        // größte Höhe (Zellen)
 #define PC_SEC_ROW 37                     // Sekundenreihe
 #define PC_ANIM 1100                      // Dauer des Umrieselns (ms)
-static const uint8_t PC_FONT[11][7] = {
-    {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
-    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
-    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
-    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
-    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
-    {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}, // „-“ solange die Uhrzeit fehlt
-};
+#define PC_FONT (&font_g120)
 static canvas8_t PCC;
 static struct {
-    lv_obj_t *tile, *wday, *date;
-    uint8_t cur[PC_W * PC_H], old[PC_W * PC_H]; // Ziffernzellen: an/aus
-    int shown;                                   // angezeigte Minute des Tages, -1 = noch nichts
+    lv_obj_t *tile, *date;
+    int c0, r0, cols, rows;                      // Lage der Zeitanzeige im Raster
+    float sx, sy, ox, oy;                        // Maßstab und Ursprung (Pixel je Schriftpixel)
+    int slot, colw, track, top;                  // Ziffernbreite, Doppelpunkt, Laufweite, Oberkante (Schriftpixel)
+    uint8_t cur[PC_MAXW * PC_MAXH], old[PC_MAXW * PC_MAXH]; // Helligkeit je Zelle, 0 = aus
+    uint8_t colon[PC_MAXW * PC_MAXH];                       // Abdeckung des Doppelpunkts
+    int shown;                                   // angezeigte Minute des Tages, -1 = keine Uhrzeit, -2 = neu
     int64_t anim_t0;                             // Start des Umrieselns (ms), 0 = keins
-    int sec, colon;
-    bool on;                                     // Pixel-Stil aktiv
+    int sec;
+    bool colon_on, on;                           // Doppelpunkt an, Pixel-Stil aktiv
 } PC;
 
-// Zellen der Ziffernanzeige für hh:mm berechnen (d < 0: Striche)
+// Abdeckung 0 … 1 eines Zeichens an der Stelle (fx, fy) in Schriftpixeln relativ zu seinem Platz
+static float pc_glyph_cov(const lv_font_glyph_dsc_t *g, const uint8_t *bmp, float fx, float fy, int slot_w)
+{
+    if (!bmp) return 0;
+    int asc = PC_FONT->line_height - PC_FONT->base_line;
+    int gx = (int)(fx - (slot_w - g->adv_w) / 2.0f - g->ofs_x);
+    int gy = (int)(fy + PC.top - (asc - g->box_h - g->ofs_y)); // Oberkante der Zeichenbox in Zeilenkoordinaten
+    if (gx < 0 || gy < 0 || gx >= g->box_w || gy >= g->box_h) return 0;
+    int i = gy * g->box_w + gx;                   // 4 Bit je Pixel, erstes Pixel im oberen Halbbyte
+    return ((bmp[i >> 1] >> ((i & 1) ? 0 : 4)) & 0x0F) / 15.0f;
+}
+
+// Abdeckung einer Zelle für den Text hh:mm (ch = Zeichen je Platz, Mittelwert aus 4 × 4 Abtastpunkten)
+static void pc_raster(const uint32_t ch[5], uint8_t *out, uint8_t *colon)
+{
+    int x0[5], w[5] = {PC.slot, PC.slot, PC.colw, PC.slot, PC.slot};
+    lv_font_glyph_dsc_t g[5];
+    const uint8_t *bmp[5];
+    for (int k = 0, x = 0; k < 5; k++) {
+        x0[k] = x;
+        x += w[k] + PC.track;
+        bmp[k] = lv_font_get_glyph_dsc(PC_FONT, &g[k], ch[k], 0) ? lv_font_get_glyph_bitmap(PC_FONT, ch[k]) : NULL;
+    }
+    for (int j = 0; j < PC.rows; j++)
+        for (int i = 0; i < PC.cols; i++) {
+            float sum = 0, sum_c = 0;
+            for (int sy = 0; sy < 4; sy++)
+                for (int sx = 0; sx < 4; sx++) {
+                    float px = (PC.c0 + i) * PC_CELL + (sx + 0.5f) * PC_CELL / 4, py = (PC.r0 + j) * PC_CELL + (sy + 0.5f) * PC_CELL / 4;
+                    float fx = (px - PC.ox) / PC.sx, fy = (py - PC.oy) / PC.sy;
+                    for (int k = 0; k < 5; k++)
+                        if (fx >= x0[k] && fx < x0[k] + w[k]) {
+                            float c = pc_glyph_cov(&g[k], bmp[k], fx - x0[k], fy, w[k]);
+                            if (k == 2) sum_c += c; else sum += c;
+                        }
+                }
+            float cov = sum / 16, covc = sum_c / 16;
+            int idx = j * PC.cols + i;
+            out[idx] = cov < 0.18f ? 0 : (uint8_t)(cov > 0.85f ? 255 : cov * 300);
+            if (colon) colon[idx] = covc < 0.18f ? 0 : (uint8_t)(covc > 0.85f ? 15 : covc * 17.6f);
+        }
+}
+
 static void pc_layout(uint8_t *out, int hh, int mm)
 {
-    memset(out, 0, PC_W * PC_H);
-    int dg[4] = {hh / 10, hh % 10, mm / 10, mm % 10}, x0[4] = {0, 12, 28, 40};
-    if (hh < 0) dg[0] = dg[1] = dg[2] = dg[3] = 10;
-    for (int k = 0; k < 4; k++)
-        for (int fy = 0; fy < 7; fy++)
-            for (int fx = 0; fx < 5; fx++)
-                if (PC_FONT[dg[k]][fy] & (0x10 >> fx))
-                    for (int dy = 0; dy < 2; dy++)
-                        for (int dx = 0; dx < 2; dx++) out[(fy * 2 + dy) * PC_W + x0[k] + fx * 2 + dx] = 1;
+    uint32_t ch[5] = {'-', '-', ':', '-', '-'};
+    if (hh >= 0) { ch[0] = '0' + hh / 10; ch[1] = '0' + hh % 10; ch[3] = '0' + mm / 10; ch[4] = '0' + mm % 10; }
+    ch[2] = ' '; // Doppelpunkt wird getrennt gezeichnet
+    pc_raster(ch, out, NULL);
+}
+
+// Lage und Maßstab einmal berechnen: so breit wie der Bildschirm, leicht in die Höhe gestreckt
+static void pc_geom(void)
+{
+    lv_font_glyph_dsc_t g;
+    PC.slot = 0;
+    for (char c = '0'; c <= '9'; c++)
+        if (lv_font_get_glyph_dsc(PC_FONT, &g, c, 0) && g.adv_w > PC.slot) PC.slot = g.adv_w;
+    lv_font_get_glyph_dsc(PC_FONT, &g, ':', 0);
+    PC.colw = g.adv_w;
+    PC.track = -PC.slot / 14;
+    lv_font_get_glyph_dsc(PC_FONT, &g, '0', 0);
+    int asc = PC_FONT->line_height - PC_FONT->base_line;
+    PC.top = asc - g.box_h - g.ofs_y; // Oberkante der Ziffern in Zeilenkoordinaten
+    int fw = 4 * PC.slot + PC.colw + 4 * PC.track, fh = g.box_h;
+    PC.sx = (PC_MAXW - 2) * PC_CELL / (float)fw;
+    PC.sy = PC.sx * 1.45f;
+    if (fh * PC.sy > (PC_MAXH - 2) * PC_CELL) PC.sy = (PC_MAXH - 2) * PC_CELL / (float)fh;
+    PC.cols = (int)(fw * PC.sx / PC_CELL) + 2;
+    PC.rows = (int)(fh * PC.sy / PC_CELL) + 2;
+    if (PC.cols > PC_MAXW) PC.cols = PC_MAXW;
+    if (PC.rows > PC_MAXH) PC.rows = PC_MAXH;
+    PC.c0 = (PC_COLS - PC.cols) / 2;
+    PC.r0 = 2 + (31 - PC.rows) / 2;
+    PC.ox = PC.c0 * PC_CELL + (PC.cols * PC_CELL - fw * PC.sx) / 2;
+    PC.oy = PC.r0 * PC_CELL + (PC.rows * PC_CELL - fh * PC.sy) / 2;
+    uint32_t cc[5] = {' ', ' ', ':', ' ', ' '};
+    uint8_t tmp[PC_MAXW * PC_MAXH];
+    pc_raster(cc, tmp, PC.colon);
 }
 
 static bool pc_masked(int q, int r)
 {
-    lv_obj_t *ls[2] = {PC.wday, PC.date};
     int x = q * PC_CELL, y = r * PC_CELL;
-    for (int i = 0; i < 2; i++) {
-        int lx = lv_obj_get_x(ls[i]) - 6, ly = lv_obj_get_y(ls[i]) - 3;
-        int lw = lv_obj_get_width(ls[i]) + 12, lh = lv_obj_get_height(ls[i]) + 4;
-        if (x + PC_CELL > lx && x < lx + lw && y + PC_CELL > ly && y < ly + lh) return true;
-    }
-    return false;
+    int lx = lv_obj_get_x(PC.date) - 6, ly = lv_obj_get_y(PC.date) - 3;
+    int lw = lv_obj_get_width(PC.date) + 12, lh = lv_obj_get_height(PC.date) + 4;
+    return x + PC_CELL > lx && x < lx + lw && y + PC_CELL > ly && y < ly + lh;
 }
 
 static uint8_t pc_bg(int q, int r)
@@ -870,18 +930,19 @@ static uint8_t pc_bg(int q, int r)
     if (pc_masked(q, r)) return 0x04;
     return (hash2(q + 500, r) % 7) == 0 ? 0x10 : 0x08;
 }
-static uint8_t pc_on(int q, int r) { return g8(0xB4 + (int)(hash2(q + 700, r) % 0x38)); }
+static uint8_t pc_on(int q, int r, uint8_t cov) { return g8((0xC4 + (int)(hash2(q + 700, r) % 0x24)) * cov / 255); }
 
 // Doppelpunkt und Sekundenreihe
 static void pc_small(int sec, bool colon)
 {
     canvas8_t *c = &PCC;
-    for (int dy = 0; dy < 2; dy++)
-        for (int dx = 0; dx < 2; dx++)
-            for (int k = 0; k < 2; k++) {
-                int q = PC_C0 + 24 + dx, r = PC_R0 + (k ? 9 : 3) + dy;
-                fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, colon ? PX_PINK : PX_PINK_DIM);
-            }
+    for (int j = 0; j < PC.rows; j++)
+        for (int i = 0; i < PC.cols; i++) {
+            uint8_t cv = PC.colon[j * PC.cols + i];
+            if (!cv) continue;
+            int lvl = colon ? cv : cv * 5 / 15;
+            fill8(c, (PC.c0 + i) * PC_CELL, (PC.r0 + j) * PC_CELL, PC_CELL - 1, PC_CELL - 1, PX_PINK0 + lvl);
+        }
     for (int q = 0; q < PC_COLS; q++) {
         uint8_t cl = sec < 0 ? pc_bg(q, PC_SEC_ROW) : q < sec ? 0x3A : q == sec ? PX_PINK : pc_bg(q, PC_SEC_ROW);
         fill8(c, q * PC_CELL, PC_SEC_ROW * PC_CELL, PC_CELL - 1, PC_CELL - 1, cl);
@@ -897,31 +958,31 @@ static void pc_draw(int64_t ms)
     for (int r = 0; r < PC_ROWS; r++)
         for (int q = 0; q < PC_COLS; q++) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_bg(q, r));
     int64_t t = PC.anim_t0 ? ms - PC.anim_t0 : PC_ANIM;
-    for (int j = 0; j < PC_H; j++)
-        for (int i = 0; i < PC_W; i++) {
-            int k = j * PC_W + i, q = PC_C0 + i, r = PC_R0 + j;
+    for (int j = 0; j < PC.rows; j++)
+        for (int i = 0; i < PC.cols; i++) {
+            int k = j * PC.cols + i, q = PC.c0 + i, r = PC.r0 + j;
             uint8_t o = PC.old[k], n = PC.cur[k];
             uint32_t hh = hash2(q, r + 900);
-            if (o && n) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r));
+            if (o && n) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r, t < 500 ? o : n));
             else if (o && !n) { // fällt heraus und verlischt
                 int st = (int)(hh % 300);
                 float p = (t - st) / 600.0f;
-                if (p < 0) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r));
+                if (p < 0) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r, o));
                 else if (p < 1) {
                     int y = r * PC_CELL + (int)(p * p * 140);
-                    fill8(c, q * PC_CELL, y, PC_CELL - 1, PC_CELL - 1, (uint8_t)(pc_on(q, r) * (1 - p)));
+                    fill8(c, q * PC_CELL, y, PC_CELL - 1, PC_CELL - 1, (uint8_t)(pc_on(q, r, o) * (1 - p)));
                 }
             } else if (!o && n) { // fällt von oben auf seinen Platz, untere Reihen zuerst
-                int st = 250 + (PC_H - 1 - j) * 22 + (int)(hh % 260);
+                int st = 250 + (PC.rows - 1 - j) * 12 + (int)(hh % 260);
                 float p = (t - st) / 420.0f;
-                if (p >= 1) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r));
+                if (p >= 1) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r, n));
                 else if (p > 0) {
                     int y = -PC_CELL + (int)((r * PC_CELL + PC_CELL) * p * p);
-                    fill8(c, q * PC_CELL, y, PC_CELL - 1, PC_CELL - 1, pc_on(q, r));
+                    fill8(c, q * PC_CELL, y, PC_CELL - 1, PC_CELL - 1, pc_on(q, r, n));
                 }
             }
         }
-    pc_small(PC.sec, PC.colon);
+    pc_small(PC.sec, PC.colon_on);
     lv_obj_invalidate(c->cv);
 }
 
@@ -947,7 +1008,7 @@ static void pc_tick(lv_timer_t *tm)
         if (!PC.anim_t0) memcpy(PC.old, PC.cur, sizeof(PC.cur));
         PC.shown = minute;
         PC.sec = sec;
-        PC.colon = sec % 2 == 0;
+        PC.colon_on = sec < 0 || sec % 2 == 0;
         pc_draw(ms);
         return;
     }
@@ -957,14 +1018,14 @@ static void pc_tick(lv_timer_t *tm)
             memcpy(PC.old, PC.cur, sizeof(PC.cur));
         }
         PC.sec = sec;
-        PC.colon = sec % 2 == 0;
+        PC.colon_on = sec % 2 == 0;
         if (vis) pc_draw(ms);
         return;
     }
     if (sec != PC.sec) {
         PC.sec = sec;
-        PC.colon = sec < 0 || sec % 2 == 0;
-        pc_small(sec, PC.colon);
+        PC.colon_on = sec < 0 || sec % 2 == 0;
+        pc_small(sec, PC.colon_on);
         lv_obj_invalidate(PCC.cv);
     }
 }
@@ -981,9 +1042,9 @@ static void build_clock(lv_obj_t *t)
     PC.on = true;
     PC.tile = t;
     canvas8_create(&PCC, t, 0, 0, W, H);
-    PC.wday = tight(txt(t, W, &font_g36, C_TEXT, "", 'l', PC_C0 * PC_CELL, 228), 1);
-    PC.date = txt(t, W, &font_m16, C_TEXT2, "", 'l', PC_C0 * PC_CELL, 256);
+    PC.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, 276);
     lv_obj_set_style_text_letter_space(PC.date, 2, 0);
+    pc_geom();
     PC.shown = -2;
     PC.sec = -1;
     lv_timer_create(pc_tick, 40, NULL);
@@ -1716,12 +1777,9 @@ static void update_clock(void)
     snprintf(full, sizeof(full), "%s · %s", days[tm.tm_wday], dt);
     if (strcmp(lv_label_get_text(G.date), full)) {
         lv_label_set_text(G.date, full);
-        if (PC.on) { // Pixel-Uhr: Wochentag groß, Datum ausgeschrieben
-            static const char *mon[12] = {"Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"};
-            char wd[16], d2[40];
-            snprintf(wd, sizeof(wd), "%c%s", days[tm.tm_wday][0], days[tm.tm_wday] + 1);
-            for (char *q = wd + 1; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32; // „Mittwoch“
-            lv_label_set_text(PC.wday, wd);
+        if (PC.on) { // Pixel-Uhr: nur das Datum, ausgeschrieben
+            static const char *mon[12] = {"JANUAR", "FEBRUAR", "MÄRZ", "APRIL", "MAI", "JUNI", "JULI", "AUGUST", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DEZEMBER"};
+            char d2[40];
             snprintf(d2, sizeof(d2), "%d. %s %d", tm.tm_mday, mon[tm.tm_mon], tm.tm_year + 1900);
             lv_label_set_text(PC.date, d2);
             PC.shown = -2; // neu zeichnen (Aussparung hinter dem Text)
@@ -2477,6 +2535,15 @@ static void ui_timer_cb(lv_timer_t *t)
 
 #ifdef CONFIG_DECK_SNAPSHOT
 #include "mbedtls/base64.h"
+// Aufnahmen brauchen 300 KB am Stück – einmal früh reservieren, bevor der Speicher zerstückelt
+static uint8_t *s_snap_buf;
+static lv_img_dsc_t s_snap_dsc;
+static lv_img_dsc_t *snap_take(lv_obj_t *obj)
+{
+    if (!s_snap_buf) s_snap_buf = heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);
+    if (!s_snap_buf || lv_snapshot_take_to_buf(obj, LV_IMG_CF_TRUE_COLOR, &s_snap_dsc, s_snap_buf, W * H * 2) != LV_RES_OK) return NULL;
+    return &s_snap_dsc;
+}
 // Screenshot-Modus: nach dem Laden der Live-Daten jede Karte (+ Einstellungen, Menü) über USB ausgeben
 static void bench_cb(lv_timer_t *t)
 {
@@ -2489,7 +2556,7 @@ static void bench_cb(lv_timer_t *t)
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
-        if (!ready && ticks < 900) return;
+        if (s_booting || (!ready && ticks < 900)) return; // erst nach dem Boot-Screen (sein Puffer ist dann frei)
         idx = 0;
         car_jump(idx, false);
         wait = 0;
@@ -2533,7 +2600,7 @@ static void bench_cb(lv_timer_t *t)
             if (now - t0 < ba_at[k]) return;
         } else if (++wait < 20) return;
         sid = k >= 4 + NIGHT_COLORS ? 60 + k - 4 - NIGHT_COLORS : k >= 4 ? 50 + k - 4 : k >= 0 ? 30 + k : idx;
-        snap = lv_snapshot_take(lv_scr_act(), LV_IMG_CF_TRUE_COLOR);
+        snap = snap_take(lv_scr_act());
         if (!snap) { printf("SNAPERR %d\n", sid); idx++; wait = 0; return; }
         if (k >= 4 && k < 4 + NIGHT_COLORS) {
             board_set_tint(true, NIGHT_COLOR_RGB[k - 4]);
@@ -2552,7 +2619,7 @@ static void bench_cb(lv_timer_t *t)
     }
     if (row >= (int)snap->header.h) {
         printf("SNAPEND %d\n", sid);
-        lv_snapshot_free(snap);
+        
         snap = NULL;
         row = -1;
         wait = 0;
@@ -2620,6 +2687,10 @@ static void boot_done(lv_anim_t *a)
     BS.mos.buf = NULL;
     BS.scr = NULL;
     s_booting = false;
+    ESP_LOGI("ui", "Boot fertig: PSRAM frei %u KB, größter Block %u KB, intern frei %u KB",
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+             (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
 }
 
 static void boot_close(void)
@@ -2760,7 +2831,7 @@ static void boot_tick(lv_timer_t *t)
     static const int when[3] = {700, 1500, 3200};
     if (shot < 3 && ms >= when[shot]) {
         lv_refr_now(NULL);
-        lv_img_dsc_t *sn = lv_snapshot_take(BS.scr, LV_IMG_CF_TRUE_COLOR);
+        lv_img_dsc_t *sn = snap_take(BS.scr);
         if (sn) {
             printf("\nSNAP %d %d %d\n", 20 + shot, (int)sn->header.w, (int)sn->header.h);
             static unsigned char out[480 * 2 * 4 / 3 + 8];
@@ -2771,7 +2842,7 @@ static void boot_tick(lv_timer_t *t)
                 printf("R%d %s\n", r, out);
             }
             printf("SNAPEND %d\n", 20 + shot);
-            lv_snapshot_free(sn);
+            
         }
         shot++;
     }
@@ -2830,6 +2901,9 @@ void ui_init(void)
     lv_obj_set_style_text_font(scr, &font_m14, 0);
     lv_obj_set_style_text_color(scr, C_TEXT, 0);
 
+#ifdef CONFIG_DECK_SNAPSHOT
+    s_snap_buf = heap_caps_malloc(W * H * 2, MALLOC_CAP_SPIRAM);
+#endif
     lv_obj_t *tiles[N_TILES];
     for (int i = 0; i < N_TILES; i++) {
         tiles[i] = rect(scr, 0, 0, W, H, C_BG);
