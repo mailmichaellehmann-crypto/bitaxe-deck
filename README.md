@@ -1,5 +1,7 @@
 # Satoshi Deck
 
+**Website:** https://mailmichaellehmann-crypto.github.io/bitaxe-deck/
+
 Bitcoin- und Solo-Mining-Dashboard für das 3,5"-Touch-Display **WT32-SC01 Plus** (ESP32-S3)
 und den **Bitaxe Gamma 601**. Gestaltung im Stil von Strike: schwarz, Geist-Schrift, Punktmatrix,
 Akzent Pink `#FFD4D4`.

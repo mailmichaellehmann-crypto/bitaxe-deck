@@ -1040,7 +1040,11 @@ static void build_clock(lv_obj_t *t)
     G.time = tight(txt(t, W, &font_g120, C_TEXT, "--:--", 'c', W / 2, 180), 4);
     G.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, 226);
     lv_obj_set_style_text_letter_space(G.date, 2, 0);
-    if (g_settings.clock_style != 1) return;
+    bool pixel = g_settings.clock_style == 1;
+#ifdef CONFIG_DECK_SNAPSHOT
+    pixel = true; // Aufnahmen immer mit Pixel-Uhr (ändert die gespeicherte Einstellung nicht)
+#endif
+    if (!pixel) return;
     // Pixel-Uhr: die klassischen Beschriftungen bleiben (für die Zeit auf den Preiskarten), unsichtbar
     lv_obj_add_flag(G.time, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(G.date, LV_OBJ_FLAG_HIDDEN);

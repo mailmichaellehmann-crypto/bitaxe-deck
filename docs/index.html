@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Satoshi Deck – Solo-Mining-Terminal für den Schreibtisch</title>
+<meta name="description" content="Satoshi Deck: Open-Source-Firmware für das 3,5-Zoll-Touch-Display WT32-SC01 Plus. Bitcoin-Kurs, Blöcke, Halving, Gebühren und dein Bitaxe live – im Pixel-Design, ohne Rechner, mit Updates über WLAN.">
+<meta name="theme-color" content="#000000">
+<meta property="og:title" content="Satoshi Deck">
+<meta property="og:description" content="Bitcoin- und Solo-Mining-Dashboard für das WT32-SC01 Plus und den Bitaxe.">
+<meta property="og:image" content="img/karte-preis.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Crect x='2' y='9' width='3' height='3' fill='%235e5e5e'/%3E%3Crect x='6' y='6' width='3' height='6' fill='%239a9a9a'/%3E%3Crect x='10' y='3' width='3' height='9' fill='%23ffd4d4'/%3E%3C/svg%3E">
+<style>
+@font-face{font-family:"Geist";src:url(fonts/Geist-Medium.ttf) format("truetype");font-weight:500;font-display:swap}
+@font-face{font-family:"Geist Mono";src:url(fonts/GeistMono-Regular.ttf) format("truetype");font-weight:400;font-display:swap}
+:root{
+  --bg:#000;--panel:#0a0a0a;--line:#1f1f1f;--line2:#333;
+  --text:#ececec;--text2:#9a9a9a;--text3:#5e5e5e;
+  --pink:#ffd4d4;--pink-dim:#7a6464;--up:#9be3b0;--down:#ff9c9c;
+  --display:"Geist",ui-sans-serif,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --sans:ui-sans-serif,-apple-system,"Helvetica Neue",Inter,Arial,sans-serif;
+  --mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --w:1120px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:17px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+img{display:block;max-width:100%;height:auto}
+.wrap{max-width:var(--w);margin:0 auto;padding:0 24px}
+.cap{font:12px/1.4 var(--mono);letter-spacing:1.6px;text-transform:uppercase;color:var(--text2)}
+.dim{color:var(--text2)}
+.acc{color:var(--pink)}
+h1,h2,h3{font-family:var(--display);font-weight:500;margin:0}
+h2{font-size:clamp(34px,5vw,52px);letter-spacing:-1.4px;line-height:1.05}
+h3{font-size:22px;letter-spacing:-.4px}
+p{margin:0 0 12px}
+code,kbd{font:14px var(--mono)}
+section{padding:96px 0;border-top:1px solid var(--line)}
+.head{display:flex;justify-content:space-between;align-items:end;gap:24px;margin-bottom:40px;flex-wrap:wrap}
+.head p{max-width:520px;color:var(--text2);margin:0}
+
+/* Navigation */
+nav{position:sticky;top:0;z-index:10;background:rgba(0,0,0,.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px;gap:16px}
+.logo{display:flex;align-items:center;gap:10px;font:500 17px var(--display);text-decoration:none;letter-spacing:-.2px}
+.logo i{display:grid;grid-template-columns:repeat(3,5px);gap:2px}
+.logo i b{width:5px;height:5px;background:var(--text3);border-radius:1px}
+.logo i b:nth-child(3n){background:var(--text2)}.logo i b:last-child{background:var(--pink)}
+nav ul{display:flex;gap:26px;list-style:none;margin:0;padding:0}
+nav ul a{font:13px var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--text2);text-decoration:none}
+nav ul a:hover{color:var(--text)}
+@media (max-width:860px){nav ul li:not(:last-child){display:none}}
+
+/* Hero */
+.hero{position:relative;padding:0 0 88px;overflow:hidden}
+#mos{display:block;width:100%;height:150px}
+.hero .grid{display:grid;grid-template-columns:1.05fr 1fr;gap:56px;align-items:center;margin-top:10px}
+.hero h1{font-size:clamp(56px,9vw,104px);letter-spacing:-3.5px;line-height:.95;margin:14px 0 22px}
+.lead{font-size:20px;color:var(--text2);max-width:520px}
+.lead b{color:var(--text);font-weight:500}
+.btns{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:13px 22px;border-radius:999px;font:500 14px var(--mono);text-decoration:none;border:1px solid var(--line2);color:var(--text);transition:background .15s,border-color .15s}
+.btn:hover{border-color:var(--text2)}
+.btn.primary{background:var(--text);color:#000;border-color:var(--text)}
+.btn.primary:hover{background:var(--pink);border-color:var(--pink)}
+.ver{margin-top:22px;display:flex;align-items:center;gap:10px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--pink);animation:breathe 2.4s ease-in-out infinite}
+@keyframes breathe{50%{opacity:.35}}
+
+/* Gerät */
+.device{position:relative;border-radius:22px;background:#050505;border:1px solid #262626;padding:18px 18px 22px;box-shadow:0 30px 80px rgba(0,0,0,.8),inset 0 0 0 6px #0b0b0b}
+.screen{position:relative;aspect-ratio:3/2;border-radius:6px;overflow:hidden;background:#000}
+.screen img{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;opacity:0;transition:opacity .6s}
+.screen img.on{opacity:1}
+.device .label{display:flex;justify-content:space-between;margin-top:14px}
+.pips{display:flex;gap:4px}
+.pips b{width:6px;height:6px;border-radius:1px;background:var(--line2);transition:background .3s}
+.pips b.on{background:var(--pink)}
+
+/* Drei Punkte */
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.box{border:1px solid var(--line);border-radius:14px;padding:26px;background:var(--panel)}
+.box h3{margin:14px 0 8px}
+.box p{color:var(--text2);margin:0;font-size:16px}
+.num{font:500 44px/1 var(--display);letter-spacing:-1.5px}
+
+/* Karten */
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel);transition:border-color .2s}
+.card:hover{border-color:var(--line2)}
+.card img{width:100%;aspect-ratio:3/2;image-rendering:pixelated;background:#000;border-bottom:1px solid var(--line)}
+.card .t{padding:18px 20px 22px}
+.card .t div{display:flex;gap:12px;align-items:baseline}
+.card h3{font-size:20px}
+.card p{color:var(--text2);font-size:15px;margin:8px 0 0}
+
+/* Abläufe */
+.seq{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.seq figure,.duo figure{margin:0}
+.seq img,.duo img,.wide img{border-radius:10px;border:1px solid var(--line);image-rendering:pixelated;width:100%}
+figcaption{margin-top:10px}
+.duo{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center}
+.split + .split{margin-top:80px}
+.split p{color:var(--text2)}
+
+/* Nachtfarben */
+.sw{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:22px}
+.sw div{border:1px solid var(--line);border-radius:10px;padding:12px}
+.sw i{display:block;height:34px;border-radius:5px;margin-bottom:10px}
+.sw b{display:block;font:500 15px var(--display)}
+.sw span{font:12px var(--mono);color:var(--text3)}
+
+/* Listen und Tabellen */
+.list{list-style:none;padding:0;margin:0;border-top:1px solid var(--line)}
+.list li{display:grid;grid-template-columns:220px 1fr;gap:20px;padding:16px 0;border-bottom:1px solid var(--line)}
+.list li > span:first-child{font:13px/1.6 var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--text)}
+.list li > span:last-child{color:var(--text2)}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:56px}
+
+/* Schritte */
+.steps{counter-reset:s;display:grid;gap:14px}
+.step{display:grid;grid-template-columns:64px minmax(0,1fr);gap:18px;border:1px solid var(--line);border-radius:14px;padding:24px;background:var(--panel)}
+.step::before{counter-increment:s;content:counter(s,decimal-leading-zero);font:500 30px/1 var(--display);color:var(--pink);letter-spacing:-1px}
+.step h3{margin-bottom:6px}
+.step p{color:var(--text2);margin-bottom:10px}
+pre{position:relative;margin:10px 0 0;padding:14px 16px;border-radius:10px;background:#000;border:1px solid var(--line);overflow-x:auto;max-width:100%}
+.split > *,.cols > *,.step > *,.hero .grid > *{min-width:0}
+pre code{color:var(--text)}
+.copy{position:absolute;top:8px;right:8px;font:11px var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--text2);background:var(--panel);border:1px solid var(--line2);border-radius:6px;padding:4px 8px;cursor:pointer}
+.copy:hover{color:var(--text)}
+.kv{display:inline-block;max-width:100%;overflow-wrap:anywhere;font:14px var(--mono);border:1px solid var(--line2);border-radius:6px;padding:1px 8px;color:var(--text)}
+
+/* Fuß */
+footer{border-top:1px solid var(--line);padding:56px 0 72px;color:var(--text3);font-size:14px}
+footer .wrap{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
+footer a{color:var(--text2)}
+
+@media (max-width:960px){
+  .hero .grid,.split,.cols{grid-template-columns:1fr;gap:36px}
+  .cards{grid-template-columns:repeat(2,1fr)}
+  .seq{grid-template-columns:repeat(2,1fr)}
+  .sw{grid-template-columns:repeat(3,1fr)}
+  .split .media{order:-1}
+}
+@media (max-width:620px){
+  .wrap{padding:0 16px}
+  section{padding:68px 0}
+  .three,.cards,.duo{grid-template-columns:1fr}
+  .sw{grid-template-columns:repeat(2,1fr)}
+  .list li{grid-template-columns:1fr;gap:4px}
+  .step{grid-template-columns:minmax(0,1fr);gap:8px}
+  pre code{font-size:12.5px}
+  .lead{font-size:18px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="logo" href="#top"><i><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b></i>Satoshi Deck</a>
+    <ul>
+      <li><a href="#karten">Karten</a></li>
+      <li><a href="#funktionen">Funktionen</a></li>
+      <li><a href="#installation">Installation</a></li>
+      <li><a href="#technik">Technik</a></li>
+      <li><a href="https://github.com/mailmichaellehmann-crypto/bitaxe-deck">GitHub ↗</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <canvas id="mos" aria-hidden="true"></canvas>
+  <div class="wrap grid">
+    <div>
+      <div class="cap">Solo Mining Terminal</div>
+      <h1>Satoshi<br>Deck</h1>
+      <p class="lead">Ein kleines Display für den Schreibtisch, das <b>Bitcoin</b> und deinen <b>Bitaxe</b> im Blick behält: Kurs, Blöcke, Halving, Gebühren, Hashrate und jede gefundene Share – im Pixel-Design, ganz ohne Rechner.</p>
+      <div class="btns">
+        <a class="btn primary" href="#installation">Installieren →</a>
+        <a class="btn" href="https://github.com/mailmichaellehmann-crypto/bitaxe-deck">Quellcode auf GitHub</a>
+      </div>
+      <div class="ver"><span class="dot"></span><span class="cap" id="ver">Open Source · Updates über WLAN</span></div>
+    </div>
+    <div class="device" aria-label="Das Satoshi Deck zeigt nacheinander seine Karten">
+      <div class="screen" id="screen">
+        <img class="on" src="img/karte-preis.png" alt="Preiskarte: Bitcoin-Kurs groß mit Pixel-Mosaik">
+        <img src="img/karte-uhr.png" alt="Pixel-Uhr">
+        <img src="img/karte-halving.png" alt="Halving-Karte aus Pixel-Sand">
+        <img src="img/karte-neuer-block.png" alt="Karte Neuer Block">
+        <img src="img/karte-lotterie.png" alt="Share-Lotterie">
+        <img src="img/karte-chart.png" alt="Chart im Pixel-Stil">
+        <img src="img/karte-bitaxe.png" alt="Bitaxe-Karte">
+      </div>
+      <div class="label"><span class="cap">WT32-SC01 Plus · 480 × 320</span><span class="pips" id="pips"></span></div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="three">
+      <div class="box"><div class="num">12</div><h3>Karten</h3><p>Vom Kurs bis zur Share-Lotterie. Wischen oder an den Rand tippen, endlos im Kreis – jede Karte lässt sich einzeln abschalten.</p></div>
+      <div class="box"><div class="num">0</div><h3>Rechner nötig</h3><p>Das Display holt alles selbst über WLAN: Kurse, Blockdaten und die Werte deines Bitaxe im Heimnetz. Keine Konten, keine API-Schlüssel.</p></div>
+      <div class="box"><div class="num acc">OTA</div><h3>Updates über WLAN</h3><p>Neue Versionen kommen automatisch aus den GitHub-Releases – mit Rückfall auf die alte Version, falls etwas nicht startet.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="karten">
+  <div class="wrap">
+    <div class="head">
+      <div><div class="cap">Karten</div><h2>Alles auf einen Blick.</h2></div>
+      <p>Jede Karte füllt den ganzen Bildschirm. Ohne Bitaxe zeigt das Deck Demo-Werte – so lässt es sich auch ohne Miner ausprobieren. Alle Bilder stammen direkt vom Gerät.</p>
+    </div>
+    <div class="cards" id="cards"></div>
+  </div>
+</section>
+
+<section id="funktionen">
+  <div class="wrap">
+    <div class="head">
+      <div><div class="cap">Animationen</div><h2>Es passiert was.</h2></div>
+      <p>Das Pixel-Mosaik ist nicht nur Dekoration: Blöcke fallen, Sand rieselt, Ziffern rieseln um. Ein Blick genügt, um zu sehen, was im Netzwerk los ist.</p>
+    </div>
+
+    <div class="block-anim">
+      <div class="split" style="align-items:end">
+        <div>
+          <div class="cap">Neuer Block</div>
+          <h3 style="font-size:30px;letter-spacing:-.8px;margin:10px 0 0">Ein Block fällt in die Kette.</h3>
+        </div>
+        <p style="margin:0">Kommt ein neuer Block, fällt ein pinker Pixel-Block auf den freien Platz, die Verbindung leuchtet auf, und die Blockhöhe rollt wie ein Zählwerk auf den neuen Wert. Danach rückt die Kette einen Platz weiter. Auf Wunsch springt das Display dafür von selbst zu dieser Karte.</p>
+      </div>
+      <div style="margin-top:28px">
+        <div class="seq">
+          <figure><img src="img/block-1.png" alt="Der neue Block fällt"><figcaption class="cap">0,7 s</figcaption></figure>
+          <figure><img src="img/block-2.png" alt="Die Blockhöhe rollt"><figcaption class="cap">1,3 s</figcaption></figure>
+          <figure><img src="img/block-3.png" alt="Neue Höhe in Pink"><figcaption class="cap">1,9 s</figcaption></figure>
+          <figure><img src="img/block-4.png" alt="Die Kette rückt weiter"><figcaption class="cap">3,5 s</figcaption></figure>
+        </div>
+      </div>
+    </div>
+    <div style="height:80px"></div>
+
+    <div class="split">
+      <div class="media">
+        <div class="duo">
+          <figure><img src="img/uhr-1.png" alt="Pixel-Uhr beim Umrieseln"><figcaption class="cap">12:59 → 13:00 · 0,45 s</figcaption></figure>
+          <figure><img src="img/uhr-2.png" alt="Pixel-Uhr kurz danach"><figcaption class="cap">0,8 s</figcaption></figure>
+        </div>
+      </div>
+      <div>
+        <div class="cap">Pixel-Uhr</div>
+        <h3 style="font-size:30px;letter-spacing:-.8px;margin:10px 0 14px">Jede Minute rieselt die Zeit um.</h3>
+        <p>Die Ziffern stammen aus der Schrift Geist und werden auf ein Raster aus Mosaik-Zellen gerechnet – Randzellen in Zwischenstufen, dadurch wirken sie glatt. Zu jeder neuen Minute fallen die erlöschenden Zellen heraus und die neuen von oben auf ihren Platz. Der Doppelpunkt blinkt pink, unten füllt sich eine Reihe aus 60 Zellen.</p>
+      </div>
+    </div>
+
+    <div class="split">
+      <div>
+        <div class="cap">Halving</div>
+        <h3 style="font-size:30px;letter-spacing:-.8px;margin:10px 0 14px">Die Epoche als Sand.</h3>
+        <p>Der ganze Bildschirm steht für die laufende Halving-Epoche aus 210.000 Blöcken – eine Zelle entspricht rund 88 Blöcken. Unten liegt der schon geschürfte Teil, darüber der Rest bis zum Halving. Körner rieseln ständig herab, bei jedem neuen Block fällt ein pinkes auf die Kante.</p>
+      </div>
+      <div class="media wide"><img src="img/karte-halving.png" alt="Halving-Karte"></div>
+    </div>
+
+    <div class="split">
+      <div class="media wide"><img src="img/boot.png" alt="Boot-Screen mit Pixel-Band und Schriftzug"></div>
+      <div>
+        <div class="cap">Boot-Screen</div>
+        <h3 style="font-size:30px;letter-spacing:-.8px;margin:10px 0 14px">Startet, bis alles da ist.</h3>
+        <p>Beim Einschalten fallen Pixel von oben und bilden ein Band, darunter läuft der echte Startvorgang: Display, WLAN, Bitaxe, Kurs, Block. Der Boot-Screen bleibt stehen, bis alle Daten geladen sind – danach gibt es keine leeren Karten.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="nacht">
+  <div class="wrap">
+    <div class="split">
+      <div>
+        <div class="cap">Nachtmodus</div>
+        <h2 style="margin:10px 0 18px">Leise in der Nacht.</h2>
+        <p>Im eingestellten Zeitfenster dimmt das Display nach 30 Sekunden ohne Berührung und zeigt alles in einer sanften Farbe. Dafür wird jedes Pixel kurz vor dem Übertragen in eine Helligkeitsstufe dieser Farbe umgerechnet – für alle Karten, Animationen und Hinweise. Eine Berührung weckt das Deck wieder.</p>
+      </div>
+      <div class="media wide"><img src="img/nachtfarben.png" alt="Die Preiskarte in sechs Nachtfarben"></div>
+    </div>
+    <div class="sw">
+      <div><i style="background:#ffb000"></i><b>Bernstein</b><span>#FFB000 · Standard</span></div>
+      <div><i style="background:#ff2a1a"></i><b>Tiefrot</b><span>#FF2A1A · schont die Augen</span></div>
+      <div><i style="background:#ffb46b"></i><b>Kerzenlicht</b><span>#FFB46B</span></div>
+      <div><i style="background:#f2a6a6"></i><b>Rosé</b><span>#F2A6A6</span></div>
+      <div><i style="background:#4cff7a"></i><b>Phosphor</b><span>#4CFF7A</span></div>
+      <div><i style="background:#9cc8ff"></i><b>Eisblau</b><span>#9CC8FF</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="bedienung">
+  <div class="wrap">
+    <div class="head">
+      <div><div class="cap">Bedienung</div><h2>Einfach anfassen.</h2></div>
+      <p>Das Deck kommt ohne Knöpfe aus. Alles Wichtige erreichst du am Display, den Rest auf einer Einstellungsseite im Browser.</p>
+    </div>
+    <div class="cols">
+      <div>
+        <div class="cap" style="margin-bottom:14px">Am Gerät</div>
+        <ul class="list">
+          <li><span>Wischen</span><span>Nach links oder rechts zur nächsten Karte – endlos im Kreis.</span></li>
+          <li><span>Rand tippen</span><span>Linkes oder rechtes Viertel des Bildschirms: eine Karte zurück oder weiter.</span></li>
+          <li><span>Lang drücken</span><span>Einstellungen: Währung, Preisalarm, Seitenwechsel, Nachtmodus, Neuer Block, Chart-Zeitraum, Helligkeit und Update-Prüfung.</span></li>
+          <li><span>Kartenmenü</span><span>Direkt zu jeder Karte springen und Karten ein- oder ausschalten.</span></li>
+          <li><span>Chart halten</span><span>Fadenkreuz mit Preis und Uhrzeit an jeder Stelle.</span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="cap" style="margin-bottom:14px">Im Browser</div>
+        <ul class="list">
+          <li><span>Verbindung</span><span>WLAN und IP-Adresse des Bitaxe.</span></li>
+          <li><span>Preisalarm</span><span>Obere und untere Grenze – das Display meldet sich, wenn der Kurs sie überschreitet.</span></li>
+          <li><span>Anzeige</span><span>Nachtmodus-Zeiten und -Farbe, Uhr (Pixel oder klassisch), Chart-Fläche (Punkte, Linie, Pixel), automatische Updates.</span></li>
+          <li><span>Mining-Kosten</span><span>Strompreis (Standard 30 ct/kWh) und Zurücksetzen des Stromzählers.</span></li>
+          <li><span>Karten</span><span>Dieselben Ein/Aus-Schalter wie im Kartenmenü.</span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="split" style="margin-top:64px">
+      <div class="media wide"><img src="img/menue.png" alt="Kartenmenü mit Schaltern"></div>
+      <div>
+        <div class="cap">Kartenmenü</div>
+        <h3 style="font-size:30px;letter-spacing:-.8px;margin:10px 0 14px">Deine Auswahl.</h3>
+        <p>Zwölf Kacheln, jede mit eigenem Schalter. Ausgeschaltete Karten erscheinen weder beim Blättern noch beim automatischen Seitenwechsel. Die aktuelle Karte ist pink umrandet.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="installation">
+  <div class="wrap">
+    <div class="head">
+      <div><div class="cap">Installation</div><h2>In zehn Minuten am Laufen.</h2></div>
+      <p>Du brauchst ein WT32-SC01 Plus, ein USB-C-Kabel und einen Rechner für das erste Flashen. Danach aktualisiert sich das Deck selbst.</p>
+    </div>
+    <div class="steps">
+      <div class="step"><div>
+        <h3>Firmware herunterladen</h3>
+        <p>Im neuesten Release die Datei <span class="kv">bitaxe_deck_full.bin</span> laden – das Komplett-Image für die Erstinstallation.</p>
+        <a class="btn" href="https://github.com/mailmichaellehmann-crypto/bitaxe-deck/releases/latest">Neuestes Release ↗</a>
+      </div></div>
+      <div class="step"><div>
+        <h3>Flashen</h3>
+        <p>Display per USB-C anschließen. Mit Python und <code>esptool</code>:</p>
+        <pre><code>pip install esptool
+python -m esptool --chip esp32s3 write_flash 0x0 bitaxe_deck_full.bin</code></pre>
+        <p style="margin-top:12px">Meldet das Tool „No serial data received“, das Kabel kurz ab- und wieder anstecken.</p>
+      </div></div>
+      <div class="step"><div>
+        <h3>Einrichten</h3>
+        <p>Ohne WLAN öffnet das Deck ein eigenes Setup-WLAN und zeigt einen QR-Code. Handy damit verbinden oder von Hand: WLAN <span class="kv">SatoshiDeck-Setup</span>, Passwort <span class="kv">satoshi21</span>. Dann im Browser <span class="kv">http://192.168.4.1</span> öffnen und Heim-WLAN (2,4 GHz) sowie die IP-Adresse deines Bitaxe eintragen.</p>
+        <p>Später findest du die Einstellungen im Heimnetz unter der IP des Displays – QR-Code und Adresse zeigt die Konfiguration nach langem Drücken.</p>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<section id="updates">
+  <div class="wrap cols">
+    <div>
+      <div class="cap">Updates</div>
+      <h2 style="margin:10px 0 18px">Immer aktuell.</h2>
+      <p class="dim">Das Deck fragt alle sechs Stunden das neueste Release auf GitHub ab. Gibt es eine neuere Version, lädt es sie verschlüsselt über HTTPS und installiert sie, sobald fünf Minuten niemand das Display berührt hat – oder sofort per Knopf in den Einstellungen.</p>
+    </div>
+    <ul class="list">
+      <li><span>Prüfen am Gerät</span><span>„v… · PRÜFEN“ oben rechts in den Einstellungen sucht sofort; bei einem Fund wird daraus „UPDATE x.y.z →“.</span></li>
+      <li><span>Rückfall</span><span>Neue Firmware gilt erst nach 60 Sekunden mit WLAN als gut. Sonst startet das Deck die vorige Version.</span></li>
+      <li><span>Zwei Bereiche</span><span>Je 6 MB für die laufende und die neue Firmware; deine Einstellungen bleiben erhalten.</span></li>
+      <li><span>Abschaltbar</span><span>Automatische Installation lässt sich im Browser ausschalten.</span></li>
+    </ul>
+  </div>
+</section>
+
+<section id="technik">
+  <div class="wrap">
+    <div class="head">
+      <div><div class="cap">Technik</div><h2>Unter der Haube.</h2></div>
+      <p>Eigenständige Firmware in C. Alle Karten, Mosaike und Animationen werden auf dem Gerät selbst gezeichnet.</p>
+    </div>
+    <div class="cols">
+      <ul class="list">
+        <li><span>Display</span><span>Smart Panlee WT32-SC01 Plus (ZX3D50CE08S): ESP32-S3, 16 MB Flash, 2 MB PSRAM, 3,5″ IPS 480 × 320, ST7796 über 8-Bit-Parallelbus, kapazitiver Touch FT6336U</span></li>
+        <li><span>Miner</span><span>Bitaxe mit AxeOS, zum Beispiel Gamma 601 – optional, ohne Miner laufen Demo-Werte</span></li>
+        <li><span>Firmware</span><span>ESP-IDF 5.3 · LVGL 8.4 · esp_lcd_st7796 · esp_websocket_client</span></li>
+        <li><span>Schriften</span><span>Geist und Geist Mono (SIL Open Font License)</span></li>
+      </ul>
+      <ul class="list">
+        <li><span>Kurse</span><span>CoinGecko – Preis, 24h-Änderung und Chart in USD und EUR</span></li>
+        <li><span>Netzwerk</span><span>mempool.space – Blöcke, Pools, Gebühren, Hashrate, Difficulty</span></li>
+        <li><span>Bitaxe</span><span>AxeOS-API im Heimnetz und der Log-Stream für die Share-Lotterie</span></li>
+        <li><span>Privatsphäre</span><span>Keine Konten, keine Schlüssel, kein Tracking. Das Deck spricht nur mit diesen Diensten, deinem Bitaxe und GitHub für Updates.</span></li>
+      </ul>
+    </div>
+
+    <div class="cols" style="margin-top:64px">
+      <div>
+        <div class="cap">Selbst bauen</div>
+        <h3 style="font-size:30px;letter-spacing:-.8px;margin:10px 0 14px">Aus dem Quellcode.</h3>
+        <p class="dim">Mit ESP-IDF 5.3. Die Bibliotheken lädt der Build beim ersten Mal selbst herunter, alle Einstellungen kommen aus <code>sdkconfig.defaults</code>.</p>
+      </div>
+      <div>
+        <pre><code>git clone https://github.com/mailmichaellehmann-crypto/bitaxe-deck.git
+cd bitaxe-deck/firmware
+. ~/esp/esp-idf/export.sh
+idf.py build
+idf.py -p /dev/cu.usbmodem1101 flash monitor</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <div class="logo" style="margin-bottom:10px"><i><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b></i>Satoshi Deck</div>
+      Open-Source-Projekt auf <a href="https://github.com/mailmichaellehmann-crypto/bitaxe-deck">GitHub</a>.<br>
+      Kein offizielles Produkt von Bitaxe, Espressif oder dem Display-Hersteller.
+    </div>
+    <div style="text-align:right">
+      Schriften: Geist und Geist Mono, <a href="fonts/Geist-OFL.txt">SIL Open Font License</a><br>
+      Kursdaten: CoinGecko · Netzwerkdaten: mempool.space
+    </div>
+  </div>
+</footer>
+
+<script>
+// Karten
+const CARDS = [
+  ["Preis", "karte-preis", "Kurs groß, 24h-Änderung, Kurs in der zweiten Währung und der Verlauf als Pixel-Mosaik."],
+  ["USD / EUR", "karte-usd-eur", "Beide Kurse untereinander, jeweils mit der Änderung über 24 Stunden."],
+  ["Chart", "karte-chart", "24 Stunden bis 1 Jahr mit Hoch und Tief. Finger halten zeigt Preis und Zeit. Als Punkte, Linie oder Pixel."],
+  ["Block", "karte-block", "Blockhöhe, Alter und Pool des letzten Blocks und die Blöcke bis zum Halving."],
+  ["Neuer Block", "karte-neuer-block", "Die letzten fünf Blöcke als Kette. Bei jedem neuen Block fällt ein pinker Pixel-Block hinein."],
+  ["Halving", "karte-halving", "Pixel-Sand über den ganzen Bildschirm: geschürfte Blöcke der Epoche, Restblöcke, geschätztes Datum."],
+  ["Gebühren", "karte-gebuehren", "Niedrig, mittel und hoch in sat/vB und in deiner Währung, dazu Sats pro Dollar."],
+  ["Difficulty", "karte-difficulty", "Erwartete Anpassung, Fortschritt der Periode und Blöcke bis zum Retarget."],
+  ["Uhr", "karte-uhr", "Pixel-Uhr aus Mosaik-Zellen, die zu jeder Minute umrieseln. Wahlweise klassisch."],
+  ["Bitaxe", "karte-bitaxe", "Hashrate, Session- und Bestwert gegenüber dem Netzwerk, ASIC- und VR-Temperatur, Lüfter."],
+  ["Mining-Kosten", "karte-kosten", "Verbrauch, Kosten pro Tag, Monat und Jahr, das Lotterielos in sats und ein Stromzähler."],
+  ["Share-Lotterie", "karte-lotterie", "Jeder Hash deines Bitaxe live als Punkt im Histogramm – ganz rechts wartet der Block."],
+];
+document.getElementById("cards").innerHTML = CARDS.map(([n, f, d], i) =>
+  `<article class="card"><img src="img/${f}.png" alt="Karte ${n}" loading="lazy" width="480" height="320">
+   <div class="t"><div><span class="cap">${String(i + 1).padStart(2, "0")}</span><h3>${n}</h3></div><p>${d}</p></div></article>`).join("");
+
+// Gerät: Karten nacheinander
+const imgs = [...document.querySelectorAll("#screen img")], pips = document.getElementById("pips");
+pips.innerHTML = imgs.map(() => "<b></b>").join("");
+let cur = 0;
+const show = i => { imgs.forEach((im, k) => im.classList.toggle("on", k === i)); [...pips.children].forEach((p, k) => p.classList.toggle("on", k === i)); };
+show(0);
+if (!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(() => show(cur = (cur + 1) % imgs.length), 3200);
+
+// Neueste Version von GitHub
+fetch("https://api.github.com/repos/mailmichaellehmann-crypto/bitaxe-deck/releases/latest")
+  .then(r => r.ok ? r.json() : null)
+  .then(j => { if (j && j.tag_name) document.getElementById("ver").textContent = `Version ${j.tag_name.replace(/^v/, "")} · Open Source · Updates über WLAN`; })
+  .catch(() => {});
+
+// Kopierknöpfe für Befehle
+document.querySelectorAll("pre").forEach(pre => {
+  const b = document.createElement("button");
+  b.className = "copy"; b.type = "button"; b.textContent = "Kopieren";
+  b.onclick = () => navigator.clipboard.writeText(pre.innerText.replace(/Kopieren$/, "").trim()).then(() => { b.textContent = "Kopiert"; setTimeout(() => b.textContent = "Kopieren", 1500); });
+  pre.appendChild(b);
+});
+
+// Pixel-Band wie beim Boot-Screen: Zellen fallen von oben und stapeln sich
+(() => {
+  const cv = document.getElementById("mos"), ctx = cv.getContext("2d");
+  const CELL = 10, still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let cells = [], cols, rows, t0;
+  const hash = (a, b) => { let h = Math.imul(a, 374761393) + Math.imul(b, 668265263); h = Math.imul(h ^ (h >>> 13), 1274126177); return (h ^ (h >>> 16)) >>> 0; };
+  function setup() {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    cv.width = cv.clientWidth * dpr; cv.height = cv.clientHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cols = Math.ceil(cv.clientWidth / CELL); rows = Math.floor(cv.clientHeight / CELL);
+    cells = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const h = hash(c + 101, r + 37), y = r / (rows - 1), x = c / cols;
+      const dens = 1.25 - y * 1.25 + 0.12 * Math.sin(x * 9 + 1.3);
+      if ((h % 1000) / 1000 >= dens) continue;
+      let v = 0x14 + ((h >>> 10) % 0x30) + Math.round((1 - y) * 0x24);
+      const pink = h % 61 === 0;
+      cells.push({ c, r, v, pink, start: (rows - 1 - r) * 60 + (hash(c, r) % 420) });
+    }
+    t0 = performance.now();
+  }
+  function frame(now) {
+    const t = still ? 1e9 : now - t0;
+    ctx.clearRect(0, 0, cv.clientWidth, cv.clientHeight);
+    let busy = false;
+    for (const e of cells) {
+      if (t < e.start) { busy = true; continue; }
+      let p = Math.min(1, (t - e.start) / 480);
+      if (p < 1) busy = true;
+      const y = -CELL + (e.r * CELL + CELL) * p * p;
+      let v = e.v;
+      if (!still && p >= 1 && hash(e.c * 7 + Math.floor(now / 180), e.r) % 97 === 0) v = Math.round(v / 3); // leichtes Flackern
+      ctx.fillStyle = e.pink ? "#ffd4d4" : `rgb(${v},${v},${v})`;
+      ctx.fillRect(e.c * CELL, y, CELL - 1, CELL - 1);
+    }
+    if (!still) requestAnimationFrame(frame);
+  }
+  setup();
+  addEventListener("resize", () => { setup(); if (still) frame(0); });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
