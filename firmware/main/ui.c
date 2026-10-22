@@ -2340,10 +2340,12 @@ static void bench_cb(lv_timer_t *t)
 
 
 // ------------------------------------------------------------------ Boot-Screen (bis alle Daten geladen sind)
-// Pixel-Mosaik baut sich in einer diagonalen Welle auf, Schriftzug blendet ein, darunter der echte
+// Pixel fallen von oben und stapeln sich zum Mosaik, Schriftzug blendet ein, darunter der echte
 // Startvorgang (Display, WLAN, Bitaxe, Kurs, Block). Ein Tippen überspringt ihn.
 #define BOOT_MAX_MS 45000 // höchstens so lange, falls etwas nicht lädt
 #define BC 8 // Mosaik-Zelle
+#define BOOT_FALL 480                                // Fallzeit einer Zelle (ms)
+#define BOOT_FALL_END (40 * 34 + 420 + BOOT_FALL)    // bis dahin sind alle gelandet
 static struct {
     lv_obj_t *scr, *word, *sub, *ver, *row_v[5], *row_d[5], *cells[55];
     canvas_t mos;
@@ -2393,9 +2395,26 @@ static void boot_tick(lv_timer_t *t)
 {
     if (!BS.scr || BS.closing) return;
     int64_t ms = esp_timer_get_time() / 1000 - BS.t0;
-    // Mosaik: Zellen erscheinen in einer Welle von rechts unten, danach leichtes Flackern
     const int cols = 60, rows = 40;
     bool dirty = false;
+    if (ms < BOOT_FALL_END + 66) {
+        // Mosaik: jede Zelle fällt von oben auf ihren Platz (schneller werdend), die unteren Reihen zuerst
+        lv_canvas_fill_bg(BS.mos.cv, C_BG, LV_OPA_COVER);
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++) {
+                int i = r * cols + c;
+                if (!BS.target[i]) continue;
+                int start = (rows - 1 - r) * 34 + (int)(hash2(c, r) % 420);
+                if (ms < start) continue;
+                float p = (ms - start) / (float)BOOT_FALL;
+                if (p > 1) p = 1;
+                int y = -BC + (int)((r * BC + BC) * p * p);
+                fill_box(&BS.mos, c * BC, y, BC - 1, BC - 1, BS.target[i] == 255 ? C_PINK : gray(BS.target[i]));
+                BS.cur[i] = p >= 1 ? BS.target[i] : 0;
+            }
+        lv_obj_invalidate(BS.mos.cv);
+    } else
+    // danach leichtes Flackern
     for (int r = 0; r < rows; r++)
         for (int c = 0; c < cols; c++) {
             int i = r * cols + c;
@@ -2469,7 +2488,7 @@ static void boot_tick(lv_timer_t *t)
     if (done == 5) shown = shown + 2 > 55 ? 55 : shown + 2;
 #ifdef CONFIG_DECK_SNAPSHOT
     static int shot = 0;
-    static const int when[3] = {1300, 3800, 8600};
+    static const int when[3] = {700, 1500, 3200};
     if (shot < 3 && ms >= when[shot]) {
         lv_refr_now(NULL);
         lv_img_dsc_t *sn = lv_snapshot_take(BS.scr, LV_IMG_CF_TRUE_COLOR);
