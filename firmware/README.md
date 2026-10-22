@@ -70,7 +70,7 @@ Ist in den Einstellungen „Neuer Block“ eingeschaltet, springt das Display da
 
 Die ganze Karte ist ein Feld aus Pixel-Sand und steht für die laufende Halving-Epoche (210.000
 Blöcke, eine Zelle ≈ 88 Blöcke). Unten liegen die schon geschürften Blöcke als Sand mit gerader
-Kante: volle Reihen, die oberste füllt sich von links nach rechts, an der Stufe liegt das neueste
+Kante (ohne helle Oberkante): volle Reihen, die oberste füllt sich von links nach rechts, an der Stufe liegt das neueste
 Korn in Pink. Der freie Raum darüber sind die restlichen Blöcke bis zum Halving. Körner rieseln
 ständig herab; bei jedem neuen Block fällt ein pinkes Korn auf die Stufe. Groß stehen die Blöcke
 bis zum Halving, knapp unter der Kante der Anteil der Epoche, unten Zielblock, geschätztes Datum

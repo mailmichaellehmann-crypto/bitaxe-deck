@@ -1230,8 +1230,8 @@ static void hg_draw(void)
             uint32_t hh = hash2(q + 300, r);
             uint8_t cl;
             if (hg_masked(q, r)) cl = (hh % 7) == 0 ? 0x0C : 0x05;
-            else if (fb < HG.colh[q] - 1) cl = g8(0x1C + (int)(0x2A * (float)fb / HG_ROWS) + (int)(hh % 0x14)); // Sand
-            else if (fb == HG.colh[q] - 1) cl = q == HG.pink_col ? PX_PINK : g8(0x8A + (int)(hh % 0x20)); // Oberfläche
+            else if (fb == HG.colh[q] - 1 && q == HG.pink_col) cl = PX_PINK; // neuestes Korn
+            else if (fb < HG.colh[q]) cl = g8(0x1C + (int)(0x2A * (float)fb / HG_ROWS) + (int)(hh % 0x14)); // Sand
             else cl = (hh % 7) == 0 ? 0x10 : 0x08; // freier Raum
             fill8(c, q * HG_CELL, r * HG_CELL, HG_CELL - 1, HG_CELL - 1, cl);
         }
