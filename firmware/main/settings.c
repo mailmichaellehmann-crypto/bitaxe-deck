@@ -11,6 +11,7 @@ deck_settings_t g_settings = {
     .night_from = 22,
     .night_to = 7,
     .night_color = 0,
+    .clock_style = 1,
     .block_note = true,
     .brightness = 80,
     .chart_style = 0,
@@ -80,6 +81,7 @@ void settings_load(void)
     get_u8(h, "n_from", &g_settings.night_from);
     get_u8(h, "n_to", &g_settings.night_to);
     get_u8(h, "ncol", &g_settings.night_color);
+    get_u8(h, "clk", &g_settings.clock_style);
     get_u8(h, "range", &g_settings.chart_range);
     get_u8(h, "bright", &g_settings.brightness);
     get_u8(h, "cstyle", &g_settings.chart_style);
@@ -100,6 +102,7 @@ void settings_load(void)
     if (g_settings.chart_range > 3) g_settings.chart_range = 0;
     if (g_settings.chart_style > 2) g_settings.chart_style = 0;
     if (g_settings.night_color > NIGHT_COLORS) g_settings.night_color = 0;
+    if (g_settings.clock_style > 1) g_settings.clock_style = 1;
     if (g_settings.brightness < 5 || g_settings.brightness > 100) g_settings.brightness = 80;
 }
 
@@ -121,6 +124,7 @@ void settings_save(void)
     nvs_set_u8(h, "n_from", g_settings.night_from);
     nvs_set_u8(h, "n_to", g_settings.night_to);
     nvs_set_u8(h, "ncol", g_settings.night_color);
+    nvs_set_u8(h, "clk", g_settings.clock_style);
     nvs_set_u8(h, "range", g_settings.chart_range);
     nvs_set_u8(h, "bright", g_settings.brightness);
     nvs_set_u8(h, "cstyle", g_settings.chart_style);
