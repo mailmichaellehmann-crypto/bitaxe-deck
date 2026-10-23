@@ -65,6 +65,10 @@ static const char *PAGE_HEAD =
     ".cards input{flex:none;width:16px;height:16px;padding:0;border-radius:4px}"
     ".cards input:checked{background:var(--pink);border-color:var(--pink)}"
     ".row{display:flex;gap:10px}"
+    ".ord{grid-template-columns:1fr}.ci{display:flex;gap:6px}.ci label{flex:1}"
+    ".ci i{font:12px var(--mono);font-style:normal;color:var(--dim);width:18px}"
+    ".ci button{margin:0;padding:0 15px;border:1px solid var(--line);border-radius:10px;background:#000;"
+    "color:var(--fg);font:15px var(--mono)}"
     "button{margin-top:32px;padding:13px 26px;border:0;border-radius:999px;font:500 14px var(--mono);"
     "color:#000;background:var(--fg);cursor:pointer}"
     "button:active{background:var(--pink)}"
@@ -92,11 +96,17 @@ static esp_err_t root_get(httpd_req_t *req)
     case OTA_FAILED: snprintf(ota_line, sizeof(ota_line), "%s", o.error); break;
     default: snprintf(ota_line, sizeof(ota_line), "noch nicht geprüft"); break;
     }
-    char cards[1400];
-    int cl = 0;
-    for (int i = 0; i < DECK_CARDS; i++)
-        cl += snprintf(cards + cl, sizeof(cards) - cl, "<label><input type=checkbox name=c%d value=1%s>%s</label>", i,
-                       (g_settings.card_mask >> i) & 1 ? " checked" : "", DECK_CARD_NAMES[i]);
+    // Karten in der eingestellten Reihenfolge, mit ↑ ↓ verschiebbar (schreibt das versteckte Feld „order“)
+    char cards[3600], order[48];
+    int cl = 0, ol = 0;
+    for (int p = 0; p < DECK_CARDS; p++) {
+        int i = g_settings.card_order[p];
+        cl += snprintf(cards + cl, sizeof(cards) - cl,
+                       "<div class=ci data-id=%d><label><i>%02d</i><input type=checkbox name=c%d value=1%s>%s</label>"
+                       "<button type=button onclick=mv(this,-1)>&uarr;</button><button type=button onclick=mv(this,1)>&darr;</button></div>",
+                       i, p + 1, i, (g_settings.card_mask >> i) & 1 ? " checked" : "", DECK_CARD_NAMES[i]);
+        ol += snprintf(order + ol, sizeof(order) - ol, "%s%d", p ? "," : "", i);
+    }
     char ncol[400];
     int nl = 0;
     for (int i = 0; i <= NIGHT_COLORS; i++)
@@ -142,7 +152,12 @@ static esp_err_t root_get(httpd_req_t *req)
              "<div class=sec>Wetter</div>"
              "<label>Ort</label><input name=wx value='%s' placeholder='z. B. Berlin, 80331 oder Frankfurt, DE' maxlength=47>"
              "<p><small>%s</small></p>"
-             "<div class=sec>Karten</div><input type=hidden name=cards value=1><div class=cards>%s</div>"
+             "<div class=sec>Karten</div><p><small>Reihenfolge mit &uarr; &darr; – am Display: im Kartenmenü eine Kachel halten und ziehen</small></p>"
+             "<input type=hidden name=cards value=1><input type=hidden name=order id=order value='%s'><div class='cards ord' id=cl>%s</div>"
+             "<script>function mv(b,d){var r=b.parentNode,l=r.parentNode,o=d<0?r.previousElementSibling:r.nextElementSibling;"
+             "if(!o)return;l.insertBefore(d<0?r:o,d<0?o:r);var a=[];l.querySelectorAll('.ci').forEach(function(e,k){"
+             "a.push(e.dataset.id);e.querySelector('i').textContent=(k<9?'0':'')+(k+1)});"
+             "document.getElementById('order').value=a.join(',')}</script>"
              "<button>Speichern &rarr;</button></form>"
              "<div class=sec>Firmware</div>"
              "<p>Installiert: <b>%s</b> · %s</p>"
@@ -158,7 +173,7 @@ static esp_err_t root_get(httpd_req_t *req)
              g_settings.clock_style == 3 ? "selected" : "", g_settings.clock_style == 0 ? "selected" : "",
              g_settings.chart_style == 0 ? "selected" : "", g_settings.chart_style == 1 ? "selected" : "",
              g_settings.chart_style == 2 ? "selected" : "",
-             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, g_settings.wx_place, wx_line, cards,
+             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, g_settings.wx_place, wx_line, order, cards,
              deck_version(), ota_line, ota_btn);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, html);
@@ -237,6 +252,18 @@ static esp_err_t save_post(httpd_req_t *req)
             if (form_field(body, k, v, sizeof(v))) m |= 1u << i;
         }
         g_settings.card_mask = m ? m : DECK_CARDS_ALL; // mindestens eine Karte bleibt an
+    }
+    if (form_field(body, "order", v, sizeof(v)) && v[0]) { // z. B. „3,0,1,…“
+        uint8_t o[DECK_CARDS];
+        int n = 0;
+        for (char *q = v, *e; *q && n < DECK_CARDS; q = e) {
+            long k = strtol(q, &e, 10);
+            if (e == q) break; // keine Zahl
+            o[n++] = k >= 0 && k < DECK_CARDS ? (uint8_t)k : 0xFF;
+            while (*e == ',' || *e == ' ') e++;
+        }
+        settings_order_fix(o, n);
+        memcpy(g_settings.card_order, o, DECK_CARDS);
     }
     if (form_field(body, "kwh_ct", v, sizeof(v)) && v[0]) {
         for (char *c = v; *c; c++) if (*c == ',') *c = '.';

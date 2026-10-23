@@ -12,7 +12,8 @@ Das Display holt sich die Daten selbst über WLAN, ein Rechner muss dafür nicht
 Alle Karten füllen den ganzen Bildschirm (ohne Kopfzeile und Überschriften). Zum Blättern nach links oder
 rechts wischen oder auf den linken bzw. rechten Rand tippen (je ein Viertel der Breite). Die Karten laufen
 endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. Ausgeschaltete Karten werden
-übersprungen.
+übersprungen. Die Reihenfolge lässt sich frei festlegen – im Kartenmenü am Display oder im Browser (siehe
+„Einstellungen am Gerät“); die Nummern unten gelten für die Standard-Reihenfolge.
 
 | # | Karte | Inhalt |
 |---|-------|--------|
@@ -148,13 +149,16 @@ alle 5 Minuten die Zahl der empfangenen Zeilen und Shares stehen im seriellen Lo
 
 Im **Kartenmenü** springt ein Tippen direkt zur Karte; die aktuelle ist pink umrandet. Mit dem Schalter
 oben rechts in jeder Kachel lässt sich die Karte ein- oder ausschalten; ausgeschaltete Karten erscheinen
-weder beim Blättern noch beim automatischen Seitenwechsel. Eine Karte bleibt immer an. Zahnrad bzw.
-„Einstellungen“ führen zur Konfiguration.
+weder beim Blättern noch beim automatischen Seitenwechsel. Eine Karte bleibt immer an. **Kachel halten
+(0,7 s) und ziehen** ordnet die Karten um: Die Kachel hebt sich pink umrandet ab, die anderen rücken
+nach, beim Loslassen ist die neue Reihenfolge gespeichert – in ihr wird geblättert, und mit der ersten
+startet das Deck. Zahnrad bzw. „Einstellungen“ führen zur Konfiguration.
 
 Im Browser lässt sich außerdem die **Chart-Fläche** wählen: Punkte (Standard), ohne Verlauf (nur die Linie)
 oder Pixel (Säulen aus Pixel-Zellen wie das Mosaik der Preiskarte).
 Unter **Wetter** wird der Ort fürs Wetter eingetragen (siehe oben).
-Unter **Karten** stehen dort dieselben Ein/Aus-Schalter wie im Kartenmenü.
+Unter **Karten** stehen dort dieselben Ein/Aus-Schalter wie im Kartenmenü, in der eingestellten
+Reihenfolge; mit ↑ und ↓ lassen sich die Karten auch dort verschieben.
 
 ## Einrichtung (einmalig)
 

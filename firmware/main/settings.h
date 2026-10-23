@@ -32,12 +32,14 @@ typedef struct {
     uint8_t chart_style; // Chart-Fläche: 0 = Punkte, 1 = ohne Verlauf, 2 = Pixel (Mosaik)
     bool auto_update;    // OTA-Updates automatisch installieren
     uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 12 = Lotterie, siehe DECK_CARD_NAMES)
+    uint8_t card_order[DECK_CARDS]; // Reihenfolge beim Blättern: Kartennummern (Index in DECK_CARD_NAMES)
     char wx_place[48];   // Ort fürs Wetter: Name, Postleitzahl oder „Breite, Länge“; leer = nicht eingestellt
 } deck_settings_t;
 
 extern deck_settings_t g_settings;
 
 void settings_load(void);
+void settings_order_fix(uint8_t *order, int n); // jede Karte genau einmal, fehlende hinten anhängen
 void settings_save(void);
 bool settings_has_wifi(void);
 const char *settings_cur(void); // "USD" oder "EUR"

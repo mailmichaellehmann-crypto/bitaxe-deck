@@ -27,6 +27,23 @@ const char *const NIGHT_COLOR_NAMES[NIGHT_COLORS + 1] = {"Bernstein", "Tiefrot",
                                                          "Phosphor",  "Eisblau", "Originalfarben"};
 const uint32_t NIGHT_COLOR_RGB[NIGHT_COLORS] = {0xFFB000, 0xFF2A1A, 0xFFB46B, 0xF2A6A6, 0x4CFF7A, 0x9CC8FF};
 
+// Neue Karten bekommen künftig die nächste freie Nummer (hinten in DECK_CARD_NAMES), damit gespeicherte
+// Reihenfolgen gültig bleiben; settings_order_fix hängt sie dort an.
+void settings_order_fix(uint8_t *order, int n)
+{
+    bool seen[DECK_CARDS] = {0};
+    uint8_t out[DECK_CARDS];
+    int k = 0;
+    for (int i = 0; i < n && k < DECK_CARDS; i++)
+        if (order[i] < DECK_CARDS && !seen[order[i]]) {
+            seen[order[i]] = true;
+            out[k++] = order[i];
+        }
+    for (int i = 0; i < DECK_CARDS; i++)
+        if (!seen[i]) out[k++] = i;
+    memcpy(order, out, DECK_CARDS);
+}
+
 // neue Karte an Platz pos einfügen (eingeschaltet), die folgenden rücken auf
 static uint16_t card_insert(uint16_t r, int pos)
 {
@@ -62,6 +79,7 @@ static void get_u32f(nvs_handle_t h, const char *key, float *v, float scale)
 
 void settings_load(void)
 {
+    settings_order_fix(g_settings.card_order, 0); // Standard: 0, 1, 2 …
     nvs_handle_t h;
     if (nvs_open("deck", NVS_READONLY, &h) != ESP_OK) return;
     get_str(h, "ssid", g_settings.wifi_ssid, sizeof(g_settings.wifi_ssid));
@@ -104,6 +122,9 @@ void settings_load(void)
         g_settings.card_mask = r & DECK_CARDS_ALL;
     }
     if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;
+    size_t ol = sizeof(g_settings.card_order);
+    if (nvs_get_blob(h, "order", g_settings.card_order, &ol) != ESP_OK) ol = 0;
+    settings_order_fix(g_settings.card_order, ol);
     nvs_close(h);
     if (g_settings.chart_range > 3) g_settings.chart_range = 0;
     if (g_settings.chart_style > 2) g_settings.chart_style = 0;
@@ -139,6 +160,7 @@ void settings_save(void)
     nvs_set_u16(h, "cards", g_settings.card_mask);
     nvs_set_u8(h, "cardsn", DECK_CARDS);
     nvs_set_u8(h, "cardsv", 2);
+    nvs_set_blob(h, "order", g_settings.card_order, sizeof(g_settings.card_order));
     nvs_commit(h);
     nvs_close(h);
 }

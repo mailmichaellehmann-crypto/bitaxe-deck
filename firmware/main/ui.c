@@ -419,8 +419,8 @@ static struct {
 } K;
 
 // ------------------------------------------------------------------ Karten-Wechsler
-// Eigener Wechsler statt lv_tileview: wischen oder links/rechts tippen, endlos im Kreis,
-// ausgeschaltete Karten werden übersprungen. Nur die aktuelle (und beim Wechsel die nächste)
+// Eigener Wechsler statt lv_tileview: wischen oder links/rechts tippen, endlos im Kreis in der
+// eingestellten Reihenfolge (g_settings.card_order), ausgeschaltete Karten werden übersprungen. Nur die aktuelle (und beim Wechsel die nächste)
 // Karte ist sichtbar.
 static lv_obj_t *s_card[N_TILES];
 static int s_cur = 0;       // aktuelle Karte
@@ -433,10 +433,19 @@ static void open_cfg(void);
 
 static bool card_on(int i) { return (g_settings.card_mask >> i) & 1; }
 
+static int card_pos(int id)
+{
+    for (int p = 0; p < N_TILES; p++)
+        if (g_settings.card_order[p] == id) return p;
+    return 0;
+}
+
+// nächste eingeschaltete Karte in der Reihenfolge (dir = +1 / -1)
 static int card_step(int from, int dir)
 {
+    int p0 = card_pos(from);
     for (int k = 1; k <= N_TILES; k++) {
-        int i = ((from + dir * k) % N_TILES + N_TILES) % N_TILES;
+        int i = g_settings.card_order[((p0 + dir * k) % N_TILES + N_TILES) % N_TILES];
         if (card_on(i)) return i;
     }
     return from;
@@ -2547,7 +2556,131 @@ static void open_cfg(void)
     lv_obj_clear_flag(s_cfg, LV_OBJ_FLAG_HIDDEN);
 }
 
-static lv_obj_t *s_menu_sw[DECK_CARDS], *s_menu_knob[DECK_CARDS], *s_menu_name[DECK_CARDS];
+static lv_obj_t *s_menu_sw[DECK_CARDS], *s_menu_knob[DECK_CARDS], *s_menu_name[DECK_CARDS], *s_menu_num[DECK_CARDS];
+
+// Kartenmenü: Kachel halten und ziehen ordnet die Karten um; die anderen rücken während des Ziehens nach
+#define MENU_PITCH_X 148
+#define MENU_PITCH_Y 52
+#define MENU_TW 144
+#define MENU_TH 48
+#define MENU_Y0 10
+static struct {
+    bool on;
+    int id, slot;            // gezogene Karte, ihr Platz in order
+    lv_point_t off;          // Finger relativ zur Kachel
+    uint8_t order[DECK_CARDS];
+} MV;
+
+static void mv_x(void *o, int32_t v) { lv_obj_set_x(o, v); }
+static void mv_y(void *o, int32_t v) { lv_obj_set_y(o, v); }
+
+static void mv_anim(lv_obj_t *o, lv_anim_exec_xcb_t cb, int from, int to)
+{
+    if (from == to) return;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, o);
+    lv_anim_set_exec_cb(&a, cb);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_time(&a, 180);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+}
+
+// Kacheln auf ihre Plätze (beim Ziehen nach der vorläufigen Reihenfolge), Nummern = Platz
+static void menu_layout(bool anim)
+{
+    const uint8_t *order = MV.on ? MV.order : g_settings.card_order;
+    for (int p = 0; p < DECK_CARDS; p++) {
+        int id = order[p];
+        lv_label_set_text_fmt(s_menu_num[id], "%02d", p + 1);
+        if (MV.on && id == MV.id) continue;
+        lv_obj_t *t = s_menu_tile[id];
+        int x = MX + (p % 3) * MENU_PITCH_X, y = MENU_Y0 + (p / 3) * MENU_PITCH_Y;
+        lv_anim_del(t, mv_x);
+        lv_anim_del(t, mv_y);
+        if (anim) {
+            mv_anim(t, mv_x, lv_obj_get_x(t), x);
+            mv_anim(t, mv_y, lv_obj_get_y(t), y);
+        } else lv_obj_set_pos(t, x, y);
+    }
+}
+
+static void menu_refresh(void);
+static void menu_drag_cb(lv_event_t *e)
+{
+    int id = (int)(intptr_t)lv_event_get_user_data(e);
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t *in = lv_indev_get_act();
+    if (!in) return;
+    lv_point_t p;
+    lv_indev_get_point(in, &p);
+    lv_obj_t *t = s_menu_tile[id];
+    if (code == LV_EVENT_LONG_PRESSED) { // anheben
+        MV.on = true;
+        MV.id = id;
+        memcpy(MV.order, g_settings.card_order, DECK_CARDS);
+        MV.slot = card_pos(id);
+        lv_anim_del(t, mv_x);
+        lv_anim_del(t, mv_y);
+        MV.off.x = p.x - lv_obj_get_x(t);
+        MV.off.y = p.y - lv_obj_get_y(t);
+        lv_obj_move_foreground(t);
+        lv_obj_set_style_border_color(t, C_PINK, 0);
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x1C1C1C), LV_STATE_PRESSED); // angehoben: heller
+    } else if (code == LV_EVENT_PRESSING && MV.on && MV.id == id) {
+        int x = p.x - MV.off.x, y = p.y - MV.off.y;
+        int ymax = MENU_Y0 + ((DECK_CARDS - 1) / 3) * MENU_PITCH_Y;
+        x = x < 0 ? 0 : x > W - MENU_TW ? W - MENU_TW : x;
+        y = y < 0 ? 0 : y > ymax ? ymax : y;
+        lv_obj_set_pos(t, x, y);
+        // Ziel: der Platz unter der Mitte der Kachel
+        int col = (x + MENU_TW / 2 - MX) / MENU_PITCH_X, row = (y + MENU_TH / 2 - MENU_Y0) / MENU_PITCH_Y;
+        col = col < 0 ? 0 : col > 2 ? 2 : col;
+        int slot = row * 3 + col;
+        if (slot >= DECK_CARDS) slot = DECK_CARDS - 1;
+        if (slot != MV.slot) {
+            if (slot > MV.slot) memmove(MV.order + MV.slot, MV.order + MV.slot + 1, slot - MV.slot);
+            else memmove(MV.order + slot + 1, MV.order + slot, MV.slot - slot);
+            MV.order[slot] = id;
+            MV.slot = slot;
+            menu_layout(true);
+        }
+    } else if ((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) && MV.on && MV.id == id) { // ablegen
+        MV.on = false;
+        if (memcmp(MV.order, g_settings.card_order, DECK_CARDS)) {
+            memcpy(g_settings.card_order, MV.order, DECK_CARDS);
+            settings_save();
+        }
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x111111), LV_STATE_PRESSED);
+        menu_layout(true);
+        menu_refresh();
+    }
+}
+
+#ifdef CONFIG_DECK_SNAPSHOT
+// Testhilfe (Screenshot-Modus): Ziehen nachstellen – erste Karte angehoben über Platz 5 – bzw. beenden
+static void menu_drag_test(bool on)
+{
+    int id = g_settings.card_order[0];
+    lv_obj_t *t = s_menu_tile[id];
+    MV.on = on;
+    if (on) {
+        MV.id = id;
+        memcpy(MV.order, g_settings.card_order, DECK_CARDS);
+        memmove(MV.order, MV.order + 1, 4);
+        MV.order[4] = id;
+        MV.slot = 4;
+        lv_obj_move_foreground(t);
+        lv_obj_set_style_border_color(t, C_PINK, 0);
+        lv_obj_set_style_bg_color(t, lv_color_hex(0x1C1C1C), 0);
+        lv_obj_set_pos(t, MX + MENU_PITCH_X + 26, MENU_Y0 + MENU_PITCH_Y + 12);
+    } else lv_obj_set_style_bg_color(t, C_BG, 0);
+    menu_layout(false);
+    menu_refresh();
+    if (on) lv_obj_set_style_border_color(t, C_PINK, 0);
+}
+#endif
 
 static void menu_refresh(void)
 {
@@ -2574,6 +2707,7 @@ static void card_toggle_cb(lv_event_t *e)
 
 static void open_menu(void)
 {
+    menu_layout(false);
     menu_refresh();
     lv_obj_add_flag(s_cfg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
@@ -2655,17 +2789,16 @@ static void build_overlays(void)
     s_menu = rect(lv_scr_act(), 0, 0, W, H, C_BG);
     lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_EVENT_BUBBLE);
     const char *const *names = DECK_CARD_NAMES;
-    // 3 Spalten × 5 Reihen
+    // 3 Spalten × 5 Reihen, angeordnet nach der eingestellten Reihenfolge (menu_layout)
     for (int i = 0; i < DECK_CARDS; i++) {
-        lv_obj_t *b = panel(s_menu, xs[i % 3], 10 + (i / 3) * 52, 144, 48);
+        lv_obj_t *b = panel(s_menu, 0, 0, MENU_TW, MENU_TH);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x111111), LV_STATE_PRESSED);
-        char num[4];
-        snprintf(num, sizeof(num), "%02d", i + 1);
-        txt(b, 144, &font_m12, C_TEXT3, num, 'l', 12, 18);
+        s_menu_num[i] = txt(b, 144, &font_m12, C_TEXT3, "", 'l', 12, 18);
         s_menu_name[i] = txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 40);
-        lv_obj_add_event_cb(b, menu_item_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(b, menu_item_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i); // nicht nach dem Ziehen
+        lv_obj_add_event_cb(b, menu_drag_cb, LV_EVENT_ALL, (void *)(intptr_t)i);
         s_menu_tile[i] = b;
         // Schalter: Karte ein/aus
         lv_obj_t *sw = rect(b, 144 - 12 - 34, 7, 34, 18, C_LINE);
@@ -2679,6 +2812,7 @@ static void build_overlays(void)
         lv_obj_set_style_radius(s_menu_knob[i], LV_RADIUS_CIRCLE, 0);
         lv_obj_clear_flag(s_menu_knob[i], LV_OBJ_FLAG_CLICKABLE);
     }
+    menu_layout(false);
     bottom_bar(s_menu, 1, true);
     lv_obj_add_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
 }
@@ -2772,7 +2906,7 @@ static void bench_cb(lv_timer_t *t)
     static const int ld_at[2] = {90, 600};           // Uhr: Aufnahmen während und nach dem Wechsel (ms)
     static const double tr_chg[2] = {2.34, -1.45};   // Uhr mit Trend rauf / runter
     ticks++;
-    if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS + 2 + 2) return;
+    if (idx >= N_TILES + 3 + 4 + NIGHT_COLORS + 2 + 2) return;
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
@@ -2783,7 +2917,7 @@ static void bench_cb(lv_timer_t *t)
         return;
     }
     if (row < 0) {
-        int k = idx - (N_TILES + 2);
+        int k = idx - (N_TILES + 3); // davor: Karten, Einstellungen, Menü, Menü beim Ziehen
         if (k >= 4 + NIGHT_COLORS + 2) { // Uhr mit 24h-Trend rauf bzw. runter
             if (wait++ == 0) {
                 car_jump(8, false);
@@ -2858,7 +2992,8 @@ static void bench_cb(lv_timer_t *t)
         if (idx < N_TILES) car_jump(idx, false);
         else if (idx == N_TILES) open_cfg();
         else if (idx == N_TILES + 1) open_menu();
-        else if (idx == N_TILES + 2) overlay_close();
+        else if (idx == N_TILES + 2) menu_drag_test(true);
+        else if (idx == N_TILES + 3) { menu_drag_test(false); overlay_close(); }
     }
 }
 #elif defined(CONFIG_DECK_PERF_BENCH)
@@ -3156,7 +3291,8 @@ void ui_init(void)
     build_miner(tiles[10]);
     build_cost(tiles[11]);
     build_lottery(tiles[12]);
-    if (!card_on(0)) car_jump(card_step(0, 1), false);
+    int first = g_settings.card_order[0]; // erste Karte der Reihenfolge
+    car_jump(card_on(first) ? first : card_step(first, 1), false);
     build_overlays();
     toast_create();
     build_update_screen();
