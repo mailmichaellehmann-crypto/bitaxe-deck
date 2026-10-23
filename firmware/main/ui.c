@@ -814,6 +814,7 @@ static void build_difficulty(lv_obj_t *t)
 // je Zelle, Ränder in Zwischenstufen – dadurch glatt), leicht gestreckt und so groß wie möglich.
 // Zu jeder Minute fallen erlöschende Zellen heraus und neue von oben auf ihren Platz. Der Doppelpunkt
 // blinkt pink, unten füllt sich eine Sekundenreihe; darunter das Datum.
+#define DECK_SNAP_CLOCK 2                 // Screenshot-Modus: Uhr-Stil für die Aufnahmen
 #define PC_CELL 8
 #define PC_COLS (W / PC_CELL)             // 60
 #define PC_ROWS (H / PC_CELL)             // 40
@@ -825,6 +826,7 @@ static void build_difficulty(lv_obj_t *t)
 #define PC_SCALE 1.0f                     // Größe: 1 = so groß wie die klassische Uhr (Schriftpixel = Bildpixel)
 #define PC_STRETCH 1.0f                   // Streckung in die Höhe (1 = Originalproportionen)
 static canvas8_t PCC;
+static void build_flap(lv_obj_t *t);
 static struct {
     lv_obj_t *tile, *date;
     int c0, r0, cols, rows;                      // Lage der Zeitanzeige im Raster
@@ -1041,11 +1043,17 @@ static void build_clock(lv_obj_t *t)
     G.time = tight(txt(t, W, &font_g120, C_TEXT, "--:--", 'c', W / 2, 180), 4);
     G.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, 226);
     lv_obj_set_style_text_letter_space(G.date, 2, 0);
-    bool pixel = g_settings.clock_style == 1;
+    int style = g_settings.clock_style;
 #ifdef CONFIG_DECK_SNAPSHOT
-    pixel = true; // Aufnahmen immer mit Pixel-Uhr (ändert die gespeicherte Einstellung nicht)
+    style = DECK_SNAP_CLOCK; // Aufnahmen mit festem Uhr-Stil (ändert die gespeicherte Einstellung nicht)
 #endif
-    if (!pixel) return;
+    if (style == 2) {
+        lv_obj_add_flag(G.time, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(G.date, LV_OBJ_FLAG_HIDDEN);
+        build_flap(t);
+        return;
+    }
+    if (style != 1) return;
     // Pixel-Uhr: die klassischen Beschriftungen bleiben (für die Zeit auf den Preiskarten), unsichtbar
     lv_obj_add_flag(G.time, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(G.date, LV_OBJ_FLAG_HIDDEN);
@@ -1072,6 +1080,182 @@ static void pc_test(int hh, int mm)
     struct tm tmv;
     localtime_r(&now, &tmv);
     PC.shown = net_time_valid() ? tmv.tm_hour * 60 + tmv.tm_min : -1;
+}
+#endif
+
+// ---- Uhr als Klappzahlen (Fallblattanzeige): vier dunkle Plättchen mit Fuge in der Mitte, Ziffern so
+// groß wie bei der klassischen Uhr. Ändert sich eine Ziffer, klappt die obere Hälfte mit der alten Ziffer
+// nach unten weg, dann klappt die untere Hälfte mit der neuen herab – schattiert, von rechts nach links versetzt.
+#define FC_W 98
+#define FC_H 144
+#define FC_GAP 10
+#define FC_COLON 34
+#define FC_Y 62
+#define FC_HALF (FC_H / 2)
+#define FC_FLIP 560                       // Dauer eines Klappens (ms)
+#define FC_FONT (&font_g120)
+static struct {
+    lv_obj_t *tile, *date, *dot[2];
+    canvas8_t cv[4];
+    uint8_t *img_old[4], *img_new[4];     // Plättchen mit alter / neuer Ziffer (Grauwerte)
+    char dig[4];                          // angezeigte Ziffern
+    int64_t t0[4];                        // Start des Klappens (ms), 0 = ruhig
+    int shown, sec;
+    bool on;
+} FC;
+
+// ein Plättchen mit Ziffer zeichnen: oben etwas heller als unten, runde Ecken, Ziffer mittig auf der Fuge
+static void fc_render(uint8_t *img, char ch)
+{
+    const int r = 7;
+    for (int y = 0; y < FC_H; y++)
+        for (int x = 0; x < FC_W; x++) {
+            int cx = x < r ? r - x : x >= FC_W - r ? x - (FC_W - 1 - r) : 0;
+            int cy = y < r ? r - y : y >= FC_H - r ? y - (FC_H - 1 - r) : 0;
+            img[y * FC_W + x] = cx * cx + cy * cy > r * r ? 0 : y < FC_HALF ? 0x1D : 0x17;
+        }
+    lv_font_glyph_dsc_t g, g0;
+    if (!lv_font_get_glyph_dsc(FC_FONT, &g, ch, 0) || !lv_font_get_glyph_dsc(FC_FONT, &g0, '0', 0)) return;
+    const uint8_t *bmp = lv_font_get_glyph_bitmap(FC_FONT, ch);
+    if (!bmp) return;
+    int base = FC_HALF + g0.box_h / 2;
+    int x0 = (FC_W - g.adv_w) / 2 + g.ofs_x, y0 = base - g.box_h - g.ofs_y;
+    for (int gy = 0; gy < g.box_h; gy++)
+        for (int gx = 0; gx < g.box_w; gx++) {
+            int i = gy * g.box_w + gx, a = (bmp[i >> 1] >> ((i & 1) ? 0 : 4)) & 0x0F;
+            int x = x0 + gx, y = y0 + gy;
+            if (!a || x < 0 || y < 0 || x >= FC_W || y >= FC_H) continue;
+            uint8_t *q = &img[y * FC_W + x];
+            *q = (uint8_t)(*q + (0xEC - *q) * a / 15);
+        }
+}
+
+// Plättchen k zum Zeitpunkt now zusammensetzen
+static void fc_compose(int k, int64_t now)
+{
+    uint8_t *o = FC.img_old[k], *n = FC.img_new[k], *dst = FC.cv[k].px;
+    int64_t t = FC.t0[k] ? now - FC.t0[k] : FC_FLIP;
+    if (t < 0) memcpy(dst, o, FC_W * FC_H); // wartet noch (versetzter Start)
+    else if (t >= FC_FLIP) {
+        memcpy(dst, n, FC_W * FC_H);
+        FC.t0[k] = 0;
+    } else {
+        // dahinter: oben schon die neue, unten noch die alte Ziffer
+        memcpy(dst, n, FC_W * FC_HALF);
+        memcpy(dst + FC_W * FC_HALF, o + FC_W * FC_HALF, FC_W * (FC_H - FC_HALF));
+        float p = t / (float)FC_FLIP;
+        if (p < 0.5f) { // obere Klappe mit der alten Ziffer klappt zur Fuge hin weg
+            float f = cosf(p * (float)M_PI); // 1 → 0
+            int hf = (int)(FC_HALF * f + 0.5f);
+            for (int y = 0; y < hf; y++) {
+                const uint8_t *src = o + (FC_HALF - 1 - y * FC_HALF / hf) * FC_W;
+                uint8_t *d = dst + (FC_HALF - 1 - y) * FC_W;
+                for (int x = 0; x < FC_W; x++) d[x] = (uint8_t)(src[x] * (0.45f + 0.55f * f));
+            }
+        } else { // untere Klappe mit der neuen Ziffer klappt von der Fuge herab
+            float f = sinf((p - 0.5f) * (float)M_PI); // 0 → 1
+            int hf = (int)((FC_H - FC_HALF) * f + 0.5f);
+            for (int y = 0; y < hf; y++) {
+                const uint8_t *src = n + (FC_HALF + y * (FC_H - FC_HALF) / hf) * FC_W;
+                uint8_t *d = dst + (FC_HALF + y) * FC_W;
+                for (int x = 0; x < FC_W; x++) d[x] = (uint8_t)(src[x] * (0.45f + 0.55f * f));
+            }
+        }
+    }
+    memset(dst + (FC_HALF - 1) * FC_W, 0, FC_W * 2); // Fuge
+    lv_obj_invalidate(FC.cv[k].cv);
+}
+
+static void fc_tick(lv_timer_t *tm)
+{
+    if (!FC.on) return;
+    int64_t now = esp_timer_get_time() / 1000;
+    bool vis = s_card[s_cur] == FC.tile || (s_nb >= 0 && s_card[s_nb] == FC.tile);
+    char d[4] = {'-', '-', '-', '-'};
+    int minute = -1, sec = -1;
+    if (net_time_valid()) {
+        time_t tt = time(NULL);
+        struct tm tmv;
+        localtime_r(&tt, &tmv);
+        d[0] = '0' + tmv.tm_hour / 10;
+        d[1] = '0' + tmv.tm_hour % 10;
+        d[2] = '0' + tmv.tm_min / 10;
+        d[3] = '0' + tmv.tm_min % 10;
+        minute = tmv.tm_hour * 60 + tmv.tm_min;
+        sec = tmv.tm_sec;
+    }
+    if (minute != FC.shown) { // neue Minute: geänderte Ziffern klappen, rechts zuerst
+        bool anim = vis && FC.shown != -2;
+        for (int k = 3; k >= 0; k--) {
+            if (d[k] == FC.dig[k]) continue;
+            memcpy(FC.img_old[k], FC.img_new[k], FC_W * FC_H);
+            fc_render(FC.img_new[k], d[k]);
+            FC.dig[k] = d[k];
+            FC.t0[k] = anim ? now + (3 - k) * 110 : 0;
+            if (!anim) fc_compose(k, now);
+        }
+        FC.shown = minute;
+    }
+    for (int k = 0; k < 4; k++)
+        if (FC.t0[k]) {
+            if (!vis) FC.t0[k] = 0; // nicht zu sehen: gleich fertig
+            fc_compose(k, now);
+        }
+    if (sec != FC.sec) { // Doppelpunkt blinkt pink
+        FC.sec = sec;
+        bool on = sec < 0 || sec % 2 == 0;
+        for (int i = 0; i < 2; i++) lv_obj_set_style_bg_color(FC.dot[i], on ? C_PINK : C_PINK_DIM, 0);
+    }
+}
+
+static void build_flap(lv_obj_t *t)
+{
+    FC.on = true;
+    FC.tile = t;
+    int x0 = (W - (4 * FC_W + 2 * FC_GAP + FC_COLON)) / 2;
+    int xs[4] = {x0, x0 + FC_W + FC_GAP, x0 + 2 * FC_W + FC_GAP + FC_COLON, x0 + 3 * FC_W + 2 * FC_GAP + FC_COLON};
+    for (int k = 0; k < 4; k++) {
+        canvas8_create(&FC.cv[k], t, xs[k], FC_Y, FC_W, FC_H);
+        FC.img_old[k] = heap_caps_malloc(FC_W * FC_H, MALLOC_CAP_SPIRAM);
+        FC.img_new[k] = heap_caps_malloc(FC_W * FC_H, MALLOC_CAP_SPIRAM);
+        fc_render(FC.img_new[k], '-');
+        memcpy(FC.img_old[k], FC.img_new[k], FC_W * FC_H);
+        FC.dig[k] = '-';
+        fc_compose(k, 0);
+    }
+    int cx = x0 + 2 * FC_W + FC_GAP + FC_COLON / 2;
+    for (int i = 0; i < 2; i++) {
+        FC.dot[i] = rect(t, cx - 5, FC_Y + FC_HALF + (i ? 18 : -28), 10, 10, C_PINK);
+        lv_obj_set_style_radius(FC.dot[i], 2, 0);
+        lv_obj_clear_flag(FC.dot[i], LV_OBJ_FLAG_CLICKABLE);
+    }
+    FC.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, FC_Y + FC_H + 52);
+    lv_obj_set_style_text_letter_space(FC.date, 2, 0);
+    FC.shown = -2;
+    FC.sec = -1;
+    lv_timer_create(fc_tick, 30, NULL);
+}
+
+#ifdef CONFIG_DECK_SNAPSHOT
+// Testhilfe (Screenshot-Modus): Klappen von hh:mm nach hh:mm+1 starten
+static void fc_test(int hh, int mm)
+{
+    if (!FC.on) return;
+    int64_t now = esp_timer_get_time() / 1000;
+    int m2 = (mm + 1) % 60, h2 = m2 ? hh : (hh + 1) % 24;
+    char a[4] = {'0' + hh / 10, '0' + hh % 10, '0' + mm / 10, '0' + mm % 10};
+    char b[4] = {'0' + h2 / 10, '0' + h2 % 10, '0' + m2 / 10, '0' + m2 % 10};
+    for (int k = 3; k >= 0; k--) {
+        fc_render(FC.img_old[k], a[k]);
+        fc_render(FC.img_new[k], b[k]);
+        FC.dig[k] = b[k];
+        FC.t0[k] = a[k] != b[k] ? now + (3 - k) * 110 : 0;
+        fc_compose(k, now);
+    }
+    time_t tt = time(NULL); // echte Minute merken, damit fc_tick die Testanzeige nicht sofort ersetzt
+    struct tm tmv;
+    localtime_r(&tt, &tmv);
+    FC.shown = net_time_valid() ? tmv.tm_hour * 60 + tmv.tm_min : -1;
 }
 #endif
 
@@ -1780,12 +1964,15 @@ static void update_clock(void)
     snprintf(full, sizeof(full), "%s · %s", days[tm.tm_wday], dt);
     if (strcmp(lv_label_get_text(G.date), full)) {
         lv_label_set_text(G.date, full);
-        if (PC.on) { // Pixel-Uhr: nur das Datum, ausgeschrieben
+        if (PC.on || FC.on) { // Pixel-Uhr und Klappzahlen: nur das Datum, ausgeschrieben
             static const char *mon[12] = {"JANUAR", "FEBRUAR", "MÄRZ", "APRIL", "MAI", "JUNI", "JULI", "AUGUST", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DEZEMBER"};
             char d2[40];
             snprintf(d2, sizeof(d2), "%d. %s %d", tm.tm_mday, mon[tm.tm_mon], tm.tm_year + 1900);
-            lv_label_set_text(PC.date, d2);
-            PC.shown = -2; // neu zeichnen (Aussparung hinter dem Text)
+            if (PC.on) {
+                lv_label_set_text(PC.date, d2);
+                PC.shown = -2; // neu zeichnen (Aussparung hinter dem Text)
+            }
+            if (FC.on) lv_label_set_text(FC.date, d2);
         }
     }
 }
@@ -2585,7 +2772,8 @@ static void bench_cb(lv_timer_t *t)
                 return;
             }
             if (wait == 10) {
-                pc_test(12, 59);
+                if (FC.on) fc_test(12, 59);
+                else pc_test(12, 59);
                 t0 = now;
                 return;
             }

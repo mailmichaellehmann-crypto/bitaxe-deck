@@ -102,7 +102,7 @@ void settings_load(void)
     if (g_settings.chart_range > 3) g_settings.chart_range = 0;
     if (g_settings.chart_style > 2) g_settings.chart_style = 0;
     if (g_settings.night_color > NIGHT_COLORS) g_settings.night_color = 0;
-    if (g_settings.clock_style > 1) g_settings.clock_style = 1;
+    if (g_settings.clock_style > 2) g_settings.clock_style = 1;
     if (g_settings.brightness < 5 || g_settings.brightness > 100) g_settings.brightness = 80;
 }
 
