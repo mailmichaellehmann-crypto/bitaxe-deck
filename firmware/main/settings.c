@@ -11,7 +11,7 @@ deck_settings_t g_settings = {
     .night_from = 22,
     .night_to = 7,
     .night_color = 0,
-    .clock_style = 2,
+    .clock_style = 3,
     .block_note = true,
     .brightness = 80,
     .chart_style = 0,
@@ -102,7 +102,7 @@ void settings_load(void)
     if (g_settings.chart_range > 3) g_settings.chart_range = 0;
     if (g_settings.chart_style > 2) g_settings.chart_style = 0;
     if (g_settings.night_color > NIGHT_COLORS) g_settings.night_color = 0;
-    if (g_settings.clock_style != 0) g_settings.clock_style = 2; // frühere Pixel-Uhr -> Klappzahlen
+    if (g_settings.clock_style != 0 && g_settings.clock_style != 2) g_settings.clock_style = 3; // Pixel-Uhr -> LED
     if (g_settings.brightness < 5 || g_settings.brightness > 100) g_settings.brightness = 80;
 }
 

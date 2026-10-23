@@ -809,10 +809,11 @@ static void build_difficulty(lv_obj_t *t)
     txt(t, W, &font_m14, C_TEXT2, "der Epoche", 'r', W - MX, 300);
 }
 
-// ---- 6 Uhr: als Klappzahlen (Standard) oder klassisch. Beide zeigen, ob der Kurs in 24 h gestiegen
+// ---- 6 Uhr: als LED-Punktanzeige (Standard), Klappzahlen oder klassisch. Beide zeigen, ob der Kurs in 24 h gestiegen
 // (hellgrün) oder gefallen (pink) ist.
-#define DECK_SNAP_CLOCK 2                 // Screenshot-Modus: Uhr-Stil für die Aufnahmen
+#define DECK_SNAP_CLOCK 3                 // Screenshot-Modus: Uhr-Stil für die Aufnahmen
 static void build_flap(lv_obj_t *t);
+static void build_led(lv_obj_t *t);
 static int s_trend;                       // 24h-Kurs: +1 gestiegen, -1 gefallen, 0 unbekannt
 static lv_color_t trend_col(void) { return s_trend > 0 ? C_UP : s_trend < 0 ? C_PINK : C_TEXT3; }
 
@@ -827,11 +828,12 @@ static void build_clock(lv_obj_t *t)
 #ifdef CONFIG_DECK_SNAPSHOT
     style = DECK_SNAP_CLOCK; // Aufnahmen mit festem Uhr-Stil (ändert die gespeicherte Einstellung nicht)
 #endif
-    if (style == 2) { // Klappzahlen: die klassischen Beschriftungen bleiben (Zeit auf den Preiskarten), unsichtbar
+    if (style == 2 || style == 3) { // die klassischen Beschriftungen bleiben (Zeit auf den Preiskarten), unsichtbar
         lv_obj_add_flag(G.time, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(G.date, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(G.trend, LV_OBJ_FLAG_HIDDEN);
-        build_flap(t);
+        if (style == 3) build_led(t);
+        else build_flap(t);
     }
 }
 
@@ -1016,6 +1018,168 @@ static void build_flap(lv_obj_t *t)
     lv_timer_create(fc_tick, 30, NULL);
 }
 
+// ---- Uhr als LED-Punktanzeige: Siebensegment-Ziffern aus runden LED-Punkten (7 × 13 je Ziffer), passend
+// zur Punktmatrix des Charts. Unbeleuchtete Segmente schimmern schwach, dahinter ein feines Punktraster.
+// Die LEDs leuchten in der Trendfarbe (gestiegen hellgrün, gefallen pink), darunter eine Sekundenreihe.
+#define LD_P 9                            // Abstand der LED-Punkte
+#define LD_CW 7                           // Ziffer: 7 × 13 Punkte
+#define LD_CH 13
+#define LD_COLS 37                        // Ziffer, 2 frei, Ziffer, 2 frei, Doppelpunkt, 2 frei, Ziffer, 2 frei, Ziffer
+#define LD_Y 46                           // Lage der Leinwand
+#define LD_H 168
+#define LD_ROW0 1                         // erste Punktreihe der Ziffern
+#define LD_SEC_Y 150                      // Mitte der Sekundenreihe (in der Leinwand)
+#define LD_FADE 180                       // Überblenden der Segmente (ms)
+#define LD_GRID 16                        // Helligkeit: Raster, unbeleuchtetes Segment, Glimmen, Sekunden
+#define LD_GHOST 34
+#define LD_GLOW 46
+#define LD_PAST 92
+static canvas8_t LDC;
+static struct {
+    lv_obj_t *tile, *date, *trend;
+    uint8_t seg_old[4], seg_new[4];       // beleuchtete Segmente je Ziffer (Bits a … g)
+    int64_t t0;                           // Start des Überblendens, 0 = ruhig
+    int shown, sec, x0;
+    bool on;
+} LD;
+
+// Segmente: a oben, b rechts oben, c rechts unten, d unten, e links unten, f links oben, g Mitte
+static uint8_t ld_segs(char ch)
+{
+    static const uint8_t m[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
+    return ch >= '0' && ch <= '9' ? m[ch - '0'] : 0x40; // sonst „-“
+}
+
+// gehört der Punkt (x, y) einer Ziffer zu einem Segment? Liefert dessen Bit, sonst 0
+static uint8_t ld_seg_at(int x, int y)
+{
+    if (y == 0 && x >= 1 && x <= 5) return 0x01;
+    if (x == 6 && y >= 1 && y <= 5) return 0x02;
+    if (x == 6 && y >= 7 && y <= 11) return 0x04;
+    if (y == 12 && x >= 1 && x <= 5) return 0x08;
+    if (x == 0 && y >= 7 && y <= 11) return 0x10;
+    if (x == 0 && y >= 1 && y <= 5) return 0x20;
+    if (y == 6 && x >= 1 && x <= 5) return 0x40;
+    return 0;
+}
+
+// runder Punkt mit weichem Rand; Werte sind Helligkeiten (Palette = Trendfarbe), es gewinnt der hellere
+static void ld_dot(int cx, int cy, float r, uint8_t v)
+{
+    canvas8_t *c = &LDC;
+    int R = (int)r + 2;
+    for (int y = cy - R; y <= cy + R; y++) {
+        if (y < 0 || y >= c->h) continue;
+        for (int x = cx - R; x <= cx + R; x++) {
+            if (x < 0 || x >= c->w) continue;
+            float d = sqrtf((float)((x - cx) * (x - cx) + (y - cy) * (y - cy)));
+            float a = r + 0.5f - d;
+            if (a <= 0) continue;
+            uint8_t q = (uint8_t)(v * (a > 1 ? 1 : a));
+            uint8_t *p = &c->px[y * c->w + x];
+            if (q > *p) *p = q;
+        }
+    }
+}
+
+static void ld_palette(void)
+{
+    lv_color_t col = s_trend ? trend_col() : C_TEXT;
+    for (int i = 0; i < 256; i++) lv_canvas_set_palette(LDC.cv, i, lv_color_mix(col, C_BG, (uint8_t)i));
+}
+
+static void ld_draw(int64_t now)
+{
+    canvas8_t *c = &LDC;
+    memset(c->px, 0, c->w * c->h);
+    float f = LD.t0 ? (now - LD.t0) / (float)LD_FADE : 1;
+    if (f >= 1) { f = 1; LD.t0 = 0; }
+    int rows = LD_SEC_Y / LD_P - 1;
+    // feines Raster wie ein LED-Panel (an den Ziffern ausgerichtet)
+    for (int gy = 0; gy < rows; gy++)
+        for (int gx = -(LD.x0 / LD_P); gx * LD_P + LD.x0 < c->w; gx++)
+            ld_dot(LD.x0 + gx * LD_P + LD_P / 2, gy * LD_P + LD_P / 2, 1.2f, LD_GRID);
+    static const int dcol[4] = {0, 9, 21, 30};
+    for (int k = 0; k < 4; k++)
+        for (int y = 0; y < LD_CH; y++)
+            for (int x = 0; x < LD_CW; x++) {
+                uint8_t bit = ld_seg_at(x, y);
+                if (!bit) continue;
+                float o = (LD.seg_old[k] & bit) ? 1 : 0, n = (LD.seg_new[k] & bit) ? 1 : 0, on = o + (n - o) * f;
+                int cx = LD.x0 + (dcol[k] + x) * LD_P + LD_P / 2, cy = (LD_ROW0 + y) * LD_P + LD_P / 2;
+                if (on > 0.02f) ld_dot(cx, cy, 5.2f, (uint8_t)(LD_GLOW * on)); // Glimmen
+                ld_dot(cx, cy, 3.3f, (uint8_t)(LD_GHOST + (255 - LD_GHOST) * on));
+            }
+    // Doppelpunkt
+    bool colon = LD.sec < 0 || LD.sec % 2 == 0;
+    for (int i = 0; i < 2; i++) {
+        int cx = LD.x0 + 18 * LD_P + LD_P / 2, cy = (LD_ROW0 + (i ? 9 : 3)) * LD_P + LD_P / 2;
+        if (colon) ld_dot(cx, cy, 5.2f, LD_GLOW);
+        ld_dot(cx, cy, 3.3f, colon ? 255 : 70);
+    }
+    // Sekundenreihe: 60 kleine LEDs
+    int sp = 6, sx0 = (c->w - 59 * sp) / 2;
+    for (int q = 0; q < 60; q++) {
+        uint8_t v = LD.sec < 0 || q > LD.sec ? LD_GHOST : q == LD.sec ? 255 : LD_PAST;
+        ld_dot(sx0 + q * sp, LD_SEC_Y, 1.7f, v);
+    }
+    lv_obj_invalidate(c->cv);
+}
+
+static void ld_tick(lv_timer_t *tm)
+{
+    if (!LD.on) return;
+    int64_t now = esp_timer_get_time() / 1000;
+    bool vis = s_card[s_cur] == LD.tile || (s_nb >= 0 && s_card[s_nb] == LD.tile);
+    char d[4] = {'-', '-', '-', '-'};
+    int minute = -1, sec = -1;
+    if (net_time_valid()) {
+        time_t tt = time(NULL);
+        struct tm tmv;
+        localtime_r(&tt, &tmv);
+        d[0] = '0' + tmv.tm_hour / 10;
+        d[1] = '0' + tmv.tm_hour % 10;
+        d[2] = '0' + tmv.tm_min / 10;
+        d[3] = '0' + tmv.tm_min % 10;
+        minute = tmv.tm_hour * 60 + tmv.tm_min;
+        sec = tmv.tm_sec;
+    }
+    bool redraw = false;
+    if (minute != LD.shown) { // neue Minute: geänderte Segmente blenden über
+        for (int k = 0; k < 4; k++) {
+            LD.seg_old[k] = LD.seg_new[k];
+            LD.seg_new[k] = ld_segs(d[k]);
+        }
+        LD.t0 = vis && LD.shown != -2 ? now : 0;
+        LD.shown = minute;
+        redraw = true;
+    }
+    if (sec != LD.sec) {
+        LD.sec = sec;
+        redraw = true;
+    }
+    if (LD.t0) redraw = true;
+    if (redraw && (vis || !LD.t0)) ld_draw(now);
+}
+
+static void build_led(lv_obj_t *t)
+{
+    LD.on = true;
+    LD.tile = t;
+    canvas8_create(&LDC, t, 0, LD_Y, W, LD_H);
+    LD.x0 = (W - LD_COLS * LD_P) / 2;
+    for (int k = 0; k < 4; k++) LD.seg_old[k] = LD.seg_new[k] = 0x40;
+    LD.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, LD_Y + LD_H + 34);
+    lv_obj_set_style_text_letter_space(LD.date, 2, 0);
+    LD.trend = txt(t, W, &font_m14, C_TEXT3, "", 'c', W / 2, LD_Y + LD_H + 62);
+    lv_obj_set_style_text_letter_space(LD.trend, 1, 0);
+    ld_palette();
+    LD.shown = -2;
+    LD.sec = -1;
+    ld_draw(0);
+    lv_timer_create(ld_tick, 30, NULL);
+}
+
 // 24h-Änderung auf der Uhr zeigen: Fuge, Doppelpunkt und Zeile unter dem Datum in Grün oder Pink
 static void clock_trend_apply(double chg)
 {
@@ -1027,6 +1191,11 @@ static void clock_trend_apply(double chg)
     s_trend = tr;
     lv_label_set_text(G.trend, b);
     lv_obj_set_style_text_color(G.trend, trend_col(), 0);
+    if (LD.on) {
+        lv_label_set_text(LD.trend, b);
+        lv_obj_set_style_text_color(LD.trend, trend_col(), 0);
+        if (changed) ld_palette();
+    }
     if (!FC.on) return;
     lv_label_set_text(FC.trend, b);
     lv_obj_set_style_text_color(FC.trend, trend_col(), 0);
@@ -1050,9 +1219,26 @@ static void clock_trend(deck_data_t *d)
 }
 
 #ifdef CONFIG_DECK_SNAPSHOT
-// Testhilfe (Screenshot-Modus): Klappen von hh:mm nach hh:mm+1 starten
+// Testhilfe (Screenshot-Modus): Wechsel von hh:mm nach hh:mm+1 starten (LED oder Klappzahlen)
+static void ld_test(int hh, int mm)
+{
+    int m2 = (mm + 1) % 60, h2 = m2 ? hh : (hh + 1) % 24;
+    char a[4] = {'0' + hh / 10, '0' + hh % 10, '0' + mm / 10, '0' + mm % 10};
+    char b[4] = {'0' + h2 / 10, '0' + h2 % 10, '0' + m2 / 10, '0' + m2 % 10};
+    for (int k = 0; k < 4; k++) {
+        LD.seg_old[k] = ld_segs(a[k]);
+        LD.seg_new[k] = ld_segs(b[k]);
+    }
+    LD.t0 = esp_timer_get_time() / 1000;
+    time_t tt = time(NULL);
+    struct tm tmv;
+    localtime_r(&tt, &tmv);
+    LD.shown = net_time_valid() ? tmv.tm_hour * 60 + tmv.tm_min : -1;
+}
+
 static void fc_test(int hh, int mm)
 {
+    if (LD.on) { ld_test(hh, mm); return; }
     if (!FC.on) return;
     int64_t now = esp_timer_get_time() / 1000;
     int m2 = (mm + 1) % 60, h2 = m2 ? hh : (hh + 1) % 24;
@@ -1777,11 +1963,11 @@ static void update_clock(void)
     snprintf(full, sizeof(full), "%s · %s", days[tm.tm_wday], dt);
     if (strcmp(lv_label_get_text(G.date), full)) {
         lv_label_set_text(G.date, full);
-        if (FC.on) { // Klappzahlen: Datum ausgeschrieben
+        if (FC.on || LD.on) { // Klappzahlen und LED: Datum ausgeschrieben
             static const char *mon[12] = {"JANUAR", "FEBRUAR", "MÄRZ", "APRIL", "MAI", "JUNI", "JULI", "AUGUST", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DEZEMBER"};
             char d2[40];
             snprintf(d2, sizeof(d2), "%d. %s %d", tm.tm_mday, mon[tm.tm_mon], tm.tm_year + 1900);
-            lv_label_set_text(FC.date, d2);
+            lv_label_set_text(FC.on ? FC.date : LD.date, d2);
         }
     }
 }
@@ -2550,7 +2736,7 @@ static void bench_cb(lv_timer_t *t)
     static int idx = -1, wait = 0, row = -1, ticks = 0, sid = 0;
     static lv_img_dsc_t *snap;
     static const int ba_at[4] = {700, 1250, 1900, 3500}; // Block-Animation: Aufnahmezeitpunkte (ms)
-    static const int fc_at[2] = {450, 800};          // Klappzahlen: Aufnahmen während des Klappens (ms)
+    static const int fc_at[2] = {90, 600};           // Uhr: Aufnahmen während und nach dem Wechsel (ms)
     static const double tr_chg[2] = {2.34, -1.45};   // Uhr mit Trend rauf / runter
     ticks++;
     if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS + 2 + 2) return;
