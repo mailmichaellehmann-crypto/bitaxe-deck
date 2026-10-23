@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define DECK_MAX_MINERS 1
-#define DECK_CARDS 12
+#define DECK_CARDS 13
 #define DECK_CARDS_ALL ((1u << DECK_CARDS) - 1)
 extern const char *const DECK_CARD_NAMES[DECK_CARDS];
 #define NIGHT_COLORS 6 // Farbtöne; danach als letzte Wahl „Originalfarben“
@@ -31,7 +31,8 @@ typedef struct {
     uint8_t brightness;  // 5..100 %
     uint8_t chart_style; // Chart-Fläche: 0 = Punkte, 1 = ohne Verlauf, 2 = Pixel (Mosaik)
     bool auto_update;    // OTA-Updates automatisch installieren
-    uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 11 = Lotterie, siehe DECK_CARD_NAMES)
+    uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 12 = Lotterie, siehe DECK_CARD_NAMES)
+    char wx_place[48];   // Ort fürs Wetter: Name, Postleitzahl oder „Breite, Länge“; leer = nicht eingestellt
 } deck_settings_t;
 
 extern deck_settings_t g_settings;

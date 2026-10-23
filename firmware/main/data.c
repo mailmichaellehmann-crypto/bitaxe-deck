@@ -1,5 +1,6 @@
 #include "data.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -210,6 +211,153 @@ static void fetch_chart(chart_range_t r)
     }
     data_unlock();
     cJSON_Delete(j);
+}
+
+// ------------------------------------------------------------------ Wetter (Open-Meteo, ohne Schlüssel)
+
+static char s_wx_for[48]; // Ort, zu dem lat/lon gehören
+
+static void url_enc(char *out, size_t len, const char *s)
+{
+    size_t o = 0;
+    for (; *s && o + 4 < len; s++) {
+        unsigned char c = *s;
+        if (isalnum(c) || c == '-' || c == '.' || c == '_') out[o++] = c;
+        else o += snprintf(out + o, len - o, "%%%02X", c);
+    }
+    out[o] = 0;
+}
+
+static void wx_error(const char *e)
+{
+    data_lock();
+    strlcpy(s_d.wx.err, e, sizeof(s_d.wx.err));
+    s_d.wx.ver++;
+    data_unlock();
+}
+
+// Ort in Koordinaten umwandeln: „52.52, 13.41“ direkt, sonst Name oder Postleitzahl („Frankfurt, DE“ = mit Ländercode)
+static bool wx_geocode(const char *place)
+{
+    double la, lo;
+    char rest;
+    if (sscanf(place, "%lf , %lf %c", &la, &lo, &rest) == 2 && fabs(la) <= 90 && fabs(lo) <= 180) {
+        data_lock();
+        s_d.wx.lat = la;
+        s_d.wx.lon = lo;
+        snprintf(s_d.wx.place, sizeof(s_d.wx.place), "%.2f° %c  %.2f° %c", fabs(la), la < 0 ? 'S' : 'N', fabs(lo), lo < 0 ? 'W' : 'O');
+        for (char *p = s_d.wx.place; *p; p++) if (*p == '.') *p = ',';
+        s_d.wx.region[0] = 0;
+        data_unlock();
+        return true;
+    }
+    char name[48], cc[3] = "";
+    strlcpy(name, place, sizeof(name));
+    char *comma = strchr(name, ',');
+    if (comma) {
+        *comma = 0;
+        const char *p = comma + 1;
+        while (*p == ' ') p++;
+        if (isalpha((unsigned char)p[0]) && isalpha((unsigned char)p[1]) && (!p[2] || p[2] == ' ')) {
+            cc[0] = toupper((unsigned char)p[0]);
+            cc[1] = toupper((unsigned char)p[1]);
+        }
+    }
+    for (int n = strlen(name); n > 0 && name[n - 1] == ' '; n--) name[n - 1] = 0;
+    char enc[150], url[256], err[48] = "";
+    url_enc(enc, sizeof(enc), name);
+    snprintf(url, sizeof(url), "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=de&format=json%s%s", enc,
+             cc[0] ? "&countryCode=" : "", cc);
+    cJSON *j = http_json(url, 10000, err, sizeof(err));
+    const cJSON *r = cJSON_GetArrayItem(cJSON_GetObjectItem(j, "results"), 0);
+    if (r) {
+        char a1[40], co[40];
+        jstr(r, "admin1", a1, sizeof(a1));
+        jstr(r, "country", co, sizeof(co));
+        data_lock();
+        s_d.wx.lat = jnum(r, "latitude", 0);
+        s_d.wx.lon = jnum(r, "longitude", 0);
+        jstr(r, "name", s_d.wx.place, sizeof(s_d.wx.place));
+        snprintf(s_d.wx.region, sizeof(s_d.wx.region), "%s%s%s", a1, a1[0] && co[0] ? ", " : "", co);
+        data_unlock();
+        ESP_LOGI(TAG, "Wetter-Ort gefunden");
+    } else wx_error(j ? "Ort nicht gefunden" : err[0] ? err : "Keine Verbindung");
+    cJSON_Delete(j);
+    return r != NULL;
+}
+
+// Wochentag (0 = Sonntag) aus „JJJJ-MM-TT“
+static int wday_of(const char *s)
+{
+    static const int t[12] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+    int y, m, d;
+    if (!s || sscanf(s, "%d-%d-%d", &y, &m, &d) != 3 || m < 1 || m > 12) return -1;
+    if (m < 3) y--;
+    return (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
+}
+
+static double jarr(const cJSON *o, const char *k, int i, double def)
+{
+    const cJSON *v = cJSON_GetArrayItem(cJSON_GetObjectItem(o, k), i);
+    return cJSON_IsNumber(v) ? v->valuedouble : def;
+}
+
+// gibt die Wartezeit bis zum nächsten Abruf zurück (ms)
+static int fetch_weather(void)
+{
+    const char *place = g_settings.wx_place;
+#ifdef CONFIG_DECK_SNAPSHOT
+    place = "Berlin"; // Aufnahmen immer mit demselben Ort
+#endif
+    if (!place[0]) {
+        data_lock();
+        s_d.wx.ok = false;
+        data_unlock();
+        wx_error("Ort im Browser eintragen");
+        return 60000;
+    }
+    if (strcmp(s_wx_for, place)) {
+        if (!wx_geocode(place)) return 5 * 60000;
+        strlcpy(s_wx_for, place, sizeof(s_wx_for));
+    }
+    char url[400], err[48] = "";
+    snprintf(url, sizeof(url),
+             "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+             "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m"
+             "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+             "&timezone=auto&forecast_days=%d",
+             s_d.wx.lat, s_d.wx.lon, WX_DAYS);
+    cJSON *j = http_json(url, 10000, err, sizeof(err));
+    const cJSON *cur = cJSON_GetObjectItem(j, "current"), *day = cJSON_GetObjectItem(j, "daily");
+    if (!cur || !day) {
+        wx_error(err[0] ? err : "Ungültige Antwort");
+        cJSON_Delete(j);
+        return 2 * 60000;
+    }
+    weather_t *w = &s_d.wx;
+    data_lock();
+    w->temp = jnum(cur, "temperature_2m", 0);
+    w->feels = jnum(cur, "apparent_temperature", w->temp);
+    w->wind = jnum(cur, "wind_speed_10m", 0);
+    w->humidity = (int)jnum(cur, "relative_humidity_2m", 0);
+    w->code = (int)jnum(cur, "weather_code", 0);
+    w->is_day = jnum(cur, "is_day", 1) > 0;
+    const cJSON *dt = cJSON_GetObjectItem(day, "time");
+    w->days = cJSON_GetArraySize(dt) < WX_DAYS ? cJSON_GetArraySize(dt) : WX_DAYS;
+    for (int i = 0; i < w->days; i++) {
+        w->d_wday[i] = wday_of(cJSON_GetStringValue(cJSON_GetArrayItem(dt, i)));
+        w->d_code[i] = (int)jarr(day, "weather_code", i, 0);
+        w->d_max[i] = jarr(day, "temperature_2m_max", i, 0);
+        w->d_min[i] = jarr(day, "temperature_2m_min", i, 0);
+        w->d_rain[i] = (int)jarr(day, "precipitation_probability_max", i, -1);
+    }
+    w->updated = time(NULL);
+    w->ok = w->days > 0;
+    w->err[0] = 0;
+    w->ver++;
+    data_unlock();
+    cJSON_Delete(j);
+    return 15 * 60000; // Open-Meteo rechnet alle 15 Minuten neu
 }
 
 // ------------------------------------------------------------------ Netzwerk
@@ -527,7 +675,7 @@ static void miner_task(void *arg)
 
 static void data_task(void *arg)
 {
-    int64_t next_price = 0, next_net = 0, next_chart = 0;
+    int64_t next_price = 0, next_net = 0, next_chart = 0, next_wx = 0;
     chart_range_t cur = (chart_range_t)g_settings.chart_range;
     bool spark_loaded = true; // Sparkline wird nicht mehr angezeigt
     for (;;) {
@@ -559,6 +707,7 @@ static void data_task(void *arg)
                 fetch_network();
                 next_net = now + 30000;
             }
+            if (now >= next_wx) next_wx = esp_timer_get_time() / 1000 + fetch_weather();
         }
         vTaskDelay(pdMS_TO_TICKS(250));
     }

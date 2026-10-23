@@ -1,6 +1,7 @@
 // Satoshi Deck – Oberfläche für 480x320 (LVGL 8.4) im Strike-Stil
 // Karten (nach links/rechts wischen):
-//  0 Preis · 1 USD & EUR · 2 Chart · 3 Block · 4 Gebühren · 5 Difficulty · 6 Uhr · 7 Bitaxe · 8 Share-Lotterie
+//  0 Preis · 1 USD & EUR · 2 Chart · 3 Block · 4 Neuer Block · 5 Halving · 6 Gebühren · 7 Difficulty · 8 Uhr
+//  9 Wetter · 10 Bitaxe · 11 Kosten · 12 Share-Lotterie
 // Gestaltung: tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen, Geist Mono für
 // Beschriftungen, 1-px-Rahmen, Punktmatrix-Chart, Pixel-Mosaik; einzige Akzentfarbe: Pink #FFD4D4.
 
@@ -30,8 +31,8 @@ LV_FONT_DECLARE(font_g20);
 LV_FONT_DECLARE(font_g26);
 LV_FONT_DECLARE(font_g36);
 LV_FONT_DECLARE(font_g50);
-LV_FONT_DECLARE(font_g72);  // nur Ziffern . , : + - %
-LV_FONT_DECLARE(font_g96);  // nur Ziffern . , : + - %
+LV_FONT_DECLARE(font_g72);  // nur Ziffern . , : + - % °
+LV_FONT_DECLARE(font_g96);  // nur Ziffern . , : + - % °
 LV_FONT_DECLARE(font_g120); // nur Ziffern . , : + - %
 LV_FONT_DECLARE(font_m12);
 LV_FONT_DECLARE(font_m14);
@@ -55,6 +56,7 @@ LV_FONT_DECLARE(font_m20);
 #define H LCD_V_RES
 #define N_TILES DECK_CARDS
 #define CARD_NEWBLOCK 4 // Karte „Neuer Block“
+#define CARD_WEATHER 9  // Karte „Wetter“
 #define NIGHT_BRIGHT 12 // Beleuchtung im Nachtmodus (%), schwach, aber nicht aus
 #define MX 20 // Seitenrand
 
@@ -1043,6 +1045,250 @@ static void ld_test(int hh, int mm)
     LD.shown = net_time_valid() ? tmv.tm_hour * 60 + tmv.tm_min : -1;
 }
 #endif
+
+// ---- Wetter: aktuelles Wetter und die nächsten 5 Tage (Open-Meteo). Die Symbole sind Pixel-Mosaike
+// aus 13 × 13 Zellen wie der Kursverlauf; Sonne und Blitz in Pink, sonst Graustufen. Groß bewegt sich
+// das Symbol leicht: Regen und Schnee fallen, die Strahlen der Sonne glimmen, Nebel zieht, es blitzt.
+#define WX_N 13     // Zellen je Seite
+#define WX_BIG 8    // Zelle groß: 7 px und Fuge, wie das Mosaik
+#define WX_SMALL 4  // Zelle klein (Vorhersage)
+#define WX_FALL0 8  // ab dieser Reihe fallen Regen und Schnee
+enum { WI_SUN, WI_MOON, WI_SUN_CLOUD, WI_MOON_CLOUD, WI_CLOUD, WI_FOG, WI_DRIZZLE, WI_RAIN, WI_SNOW, WI_THUNDER, WI_COUNT };
+// S Sonne · r/R Strahl · M Mond · C/c Wolke (unten dunkler) · G/g Regenwolke · d Tropfen · * Flocke · B Blitz · F/f Nebel
+static const char *const WX_ICON[WI_COUNT][WX_N] = {
+    [WI_SUN] = {"......r......", "......r......", "..R.......R..", "...R.....R...", ".....SSS.....", "....SSSSS....", "rr..SSSSS..rr",
+                "....SSSSS....", ".....SSS.....", "...R.....R...", "..R.......R..", "......r......", "......r......"},
+    [WI_MOON] = {".............", ".....M.......", "...MMM.......", "..MMM........", "..MMM........", ".MMMM........", ".MMMM........",
+                 ".MMMMM.......", "..MMMMM......", "..MMMMMMMMM..", "...MMMMMMM...", ".....MMM.....", "............."},
+    [WI_SUN_CLOUD] = {"....r........", ".r.....r.....", "...SSS.......", "..SSSSS......", "r.SSSSS......", "..SSSCCCCC...", "...SCCCCCC...",
+                      "...CCCCCCCCC.", "..CCCCCCCCCCC", "..CCCCCCCCCCC", ".CCCCCCCCCCC.", ".ccccccccccc.", "............."},
+    [WI_MOON_CLOUD] = {"..........M..", ".........MM..", "........MM...", "........MM...", "........MMM.M", ".........MMMM", "....GGGGG....",
+                       "...GGGGGG....", "..GGGGGGGGG..", ".GGGGGGGGGGG.", ".GGGGGGGGGGG.", "GGGGGGGGGGG..", "ggggggggggg.."},
+    [WI_CLOUD] = {".............", ".............", ".............", ".............", ".....CCCCC...", "....CCCCCC...", "...CCCCCCCCC.",
+                  "..CCCCCCCCCCC", "..CCCCCCCCCCC", ".CCCCCCCCCCC.", ".ccccccccccc.", ".............", "............."},
+    [WI_FOG] = {".............", ".............", "..FFFFFFFFF..", ".............", "fffffffff....", ".............", "...FFFFFFFFFF",
+                ".............", ".fffffffff...", ".............", "....FFFFFFFF.", ".............", "............."},
+    [WI_DRIZZLE] = {".............", ".....GGGGG...", "....GGGGGG...", "...GGGGGGGGG.", "..GGGGGGGGGGG", "..GGGGGGGGGGG", ".GGGGGGGGGGG.",
+                    ".ggggggggggg.", ".............", "...d.....d...", ".............", "......d......", ".d.........d."},
+    [WI_RAIN] = {".............", ".....GGGGG...", "....GGGGGG...", "...GGGGGGGGG.", "..GGGGGGGGGGG", "..GGGGGGGGGGG", ".GGGGGGGGGGG.",
+                 ".ggggggggggg.", ".............", "...d.....d...", "...d.....d...", "d.....d.....d", "d.....d.....d"},
+    [WI_SNOW] = {".............", ".....CCCCC...", "....CCCCCC...", "...CCCCCCCCC.", "..CCCCCCCCCCC", "..CCCCCCCCCCC", ".CCCCCCCCCCC.",
+                 ".ccccccccccc.", ".............", "...*........*", "..***....*...", "...*....***..", "*.....*..*..."},
+    [WI_THUNDER] = {".............", ".....GGGGG...", "....GGGGGG...", "...GGGGGGGGG.", "..GGGGGGGGGGG", "..GGGGGGGGGGG", ".GGGGGGGGGGG.",
+                    ".ggggggBBggg.", "......BB.....", "..d..BBBB....", "..d...BB...d.", ".....BB....d.", ".....B......."},
+};
+static canvas8_t WXC, WXD[5];
+static struct {
+    lv_obj_t *tile, *status, *dot, *temp, *cond, *val[4], *day[5], *dtemp[5], *drain[5];
+    int icon; // großes Symbol, -1 = keine Daten
+} WX = {.icon = -1};
+
+static int wx_icon(int code, bool day)
+{
+    if (code <= 1) return day ? WI_SUN : WI_MOON;
+    if (code == 2) return day ? WI_SUN_CLOUD : WI_MOON_CLOUD;
+    if (code == 45 || code == 48) return WI_FOG;
+    if (code >= 51 && code <= 57) return WI_DRIZZLE;
+    if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return WI_RAIN;
+    if ((code >= 71 && code <= 77) || code == 85 || code == 86) return WI_SNOW;
+    if (code >= 95) return WI_THUNDER;
+    return WI_CLOUD;
+}
+
+static const char *wx_text(int code, bool day)
+{
+    switch (code) {
+    case 0: return day ? "Sonnig" : "Klar";
+    case 1: return day ? "Heiter" : "Überwiegend klar";
+    case 2: return "Wolkig";
+    case 3: return "Bedeckt";
+    case 45: return "Nebel";
+    case 48: return "Reifnebel";
+    case 51: return "Leichter Niesel";
+    case 53: return "Nieselregen";
+    case 55: return "Starker Niesel";
+    case 56: case 57: return "Gefrierender Niesel";
+    case 61: return "Leichter Regen";
+    case 63: return "Regen";
+    case 65: return "Starker Regen";
+    case 66: case 67: return "Gefrierender Regen";
+    case 71: return "Leichter Schnee";
+    case 73: return "Schneefall";
+    case 75: return "Starker Schnee";
+    case 77: return "Schneegriesel";
+    case 80: return "Leichte Schauer";
+    case 81: return "Regenschauer";
+    case 82: return "Heftige Schauer";
+    case 85: return "Schneeschauer";
+    case 86: return "Starke Schneeschauer";
+    case 95: return "Gewitter";
+    case 96: case 99: return "Gewitter mit Hagel";
+    }
+    return "";
+}
+
+static void fmt_temp(char *o, size_t l, float v)
+{
+    int t = (int)lroundf(v);
+    snprintf(o, l, "%s%d°", t < 0 ? "–" : "", abs(t));
+}
+
+// Symbol zeichnen; t = Zeit in ms für die Bewegung, -1 = ruhend
+static void wx_draw(canvas8_t *c, int icon, int cell, int64_t t)
+{
+    memset(c->px, 0, c->w * c->h);
+    for (int y = 0; y < WX_N; y++) // leere Zellen ganz schwach, wie im Mosaik
+        for (int x = 0; x < WX_N; x++) fill8(c, x * cell, y * cell, cell - 1, cell - 1, (hash2(x + 500, y) % 7) == 0 ? 0x10 : 0x08);
+    if (icon < 0) {
+        lv_obj_invalidate(c->cv);
+        return;
+    }
+    bool anim = t >= 0;
+    int fall = anim ? (int)(t / (icon == WI_SNOW ? 420 : 140)) : 0;           // Regen schnell, Schnee langsam
+    float tw = anim ? 0.5f + 0.5f * sinf((float)(t % 2400) / 2400 * 6.2832f) : 0.5f; // Strahlen glimmen im Wechsel
+    int fog = anim ? (int)((t / 900) % 4) : 0;
+    fog = fog == 1 ? 1 : fog == 3 ? -1 : 0;
+    bool flash = anim && (t % 3200 < 90 || (t % 3200 > 220 && t % 3200 < 300)); // Doppelblitz
+    for (int y = 0; y < WX_N; y++)
+        for (int x = 0; x < WX_N; x++) {
+            char ch = WX_ICON[icon][y][x];
+            int xx = x, yy = y;
+            uint8_t v;
+            switch (ch) {
+            case 'S': v = PX_PINK; break;
+            case 'r': v = PX_PINK0 + 7 + (int)(6 * tw); break;
+            case 'R': v = PX_PINK0 + 4 + (int)(6 * (1 - tw)); break;
+            case 'B': v = flash ? PX_PINK : PX_PINK0 + 10; break;
+            case 'M': v = 0xE0; break;
+            case 'C': v = 0xC8; break;
+            case 'c': v = 0x86; break;
+            case 'G': v = 0x9A; break;
+            case 'g': v = 0x5E; break;
+            case 'd': case '*':
+                v = ch == 'd' ? 0xB4 : 0xEC;
+                yy = WX_FALL0 + (y - WX_FALL0 + fall) % (WX_N - WX_FALL0);
+                break;
+            case 'F': case 'f':
+                v = ch == 'F' ? 0x8A : 0x50;
+                xx = x + ((y / 2) & 1 ? -fog : fog);
+                if (xx < 0 || xx >= WX_N) continue;
+                break;
+            default: continue;
+            }
+            fill8(c, xx * cell, yy * cell, cell - 1, cell - 1, v);
+        }
+    lv_obj_invalidate(c->cv);
+}
+
+static void wx_tick(lv_timer_t *tm)
+{
+    if (WX.icon < 0 || WX.icon == WI_CLOUD || WX.icon == WI_MOON || WX.icon == WI_MOON_CLOUD) return;
+    bool vis = s_card[s_cur] == WX.tile || (s_nb >= 0 && s_card[s_nb] == WX.tile);
+    if (vis && !s_booting) wx_draw(&WXC, WX.icon, WX_BIG, esp_timer_get_time() / 1000);
+}
+
+static void build_weather(lv_obj_t *t)
+{
+    WX.tile = t;
+    cap(t, W, "WETTER", 'l', MX, 30);
+    WX.status = txt(t, W, &font_m14, C_TEXT2, "", 'r', W - MX, 30);
+    WX.dot = rect(t, 0, 20, 7, 7, C_TEXT3);
+    lv_obj_set_style_radius(WX.dot, LV_RADIUS_CIRCLE, 0);
+    breathe(WX.dot);
+    canvas8_create(&WXC, t, MX, 46, WX_N * WX_BIG, WX_N * WX_BIG);
+    wx_draw(&WXC, -1, WX_BIG, -1);
+    WX.temp = tight(txt(t, W, &font_g96, C_TEXT, "–", 'l', 140, 120), 4);
+    WX.cond = txt(t, W, &font_m14, C_TEXT2, "", 'l', 144, 148);
+    static const char *sn[4] = {"HEUTE", "GEFÜHLT", "WIND", "REGEN"};
+    for (int i = 0; i < 4; i++) {
+        cap(t, W, sn[i], 'l', 336, 66 + i * 28);
+        WX.val[i] = txt(t, W, &font_g20, C_TEXT, "–", 'r', W - MX, 66 + i * 28);
+        lv_label_set_recolor(WX.val[i], true);
+    }
+    for (int i = 0; i < 5; i++) {
+        int w = 84;
+        lv_obj_t *p = panel(t, MX + i * 89, 168, w, 136);
+        WX.day[i] = cap(p, w, "", 'c', w / 2, 22);
+        canvas8_create(&WXD[i], p, (w - WX_N * WX_SMALL) / 2, 32, WX_N * WX_SMALL, WX_N * WX_SMALL);
+        wx_draw(&WXD[i], -1, WX_SMALL, -1);
+        WX.dtemp[i] = txt(p, w, &font_g20, C_TEXT, "", 'c', w / 2, 108);
+        lv_label_set_recolor(WX.dtemp[i], true);
+        WX.drain[i] = txt(p, w, &font_m12, C_TEXT3, "", 'c', w / 2, 126);
+    }
+    lv_timer_create(wx_tick, 100, NULL);
+}
+
+// Ort, Punkt (pink = aktuell, grau = keine oder alte Daten) und Fehler
+static void wx_status(const weather_t *w)
+{
+    bool fresh = w->ok && time(NULL) - w->updated < 3600;
+    lv_label_set_text(WX.status, w->place[0] ? w->place : g_settings.wx_place[0] ? "" : "KEIN ORT");
+    lv_obj_set_style_bg_color(WX.dot, fresh ? C_PINK : w->ok ? C_TEXT3 : C_DOWN, 0);
+    lv_obj_update_layout(WX.status);
+    lv_obj_set_x(WX.dot, lv_obj_get_x(WX.status) - 14);
+}
+
+static uint32_t v_wx;
+static void update_weather(deck_data_t *d)
+{
+    static int n = 0;
+    const weather_t *w = &d->wx;
+    if (++n % 20 == 0) wx_status(w); // alle 10 s: Daten zu alt?
+    if (w->ver == v_wx) return;
+    v_wx = w->ver;
+    wx_status(w);
+    if (!w->ok) {
+        lv_label_set_text(WX.cond, w->err);
+        lv_obj_set_style_text_color(WX.cond, C_PINK, 0);
+        return;
+    }
+    static const char *const wd[7] = {"SO", "MO", "DI", "MI", "DO", "FR", "SA"};
+    char b[48], a1[16], a2[16];
+    fmt_temp(b, sizeof(b), w->temp);
+    const lv_font_t *f = lroundf(w->temp) <= -10 ? &font_g72 : &font_g96; // „–12°“ passt nur kleiner neben die Werte
+    if (lv_obj_get_style_text_font(WX.temp, 0) != f) {
+        lv_obj_set_style_text_font(WX.temp, f, 0);
+        lv_obj_set_y(WX.temp, 120 - ascent(f));
+    }
+    lv_label_set_text(WX.temp, b);
+    lv_label_set_text(WX.cond, w->err[0] ? w->err : wx_text(w->code, w->is_day));
+    lv_obj_set_style_text_color(WX.cond, w->err[0] ? C_PINK : C_TEXT2, 0);
+    fmt_temp(a1, sizeof(a1), w->d_max[0]);
+    fmt_temp(a2, sizeof(a2), w->d_min[0]);
+    snprintf(b, sizeof(b), "%s #9A9A9A / %s#", a1, a2);
+    lv_label_set_text(WX.val[0], b);
+    fmt_temp(b, sizeof(b), w->feels);
+    lv_label_set_text(WX.val[1], b);
+    snprintf(b, sizeof(b), "%d #9A9A9A km/h#", (int)lroundf(w->wind));
+    lv_label_set_text(WX.val[2], b);
+    if (w->d_rain[0] >= 0) snprintf(b, sizeof(b), "%d #9A9A9A %%#", w->d_rain[0]);
+    else strlcpy(b, "–", sizeof(b));
+    lv_label_set_text(WX.val[3], b);
+    int icon = wx_icon(w->code, w->is_day);
+    if (icon != WX.icon) {
+        WX.icon = icon;
+        wx_draw(&WXC, icon, WX_BIG, -1);
+    }
+    for (int i = 0; i < 5; i++) {
+        int k = i + 1;
+        bool ok = k < w->days;
+        lv_label_set_text(WX.day[i], ok && w->d_wday[k] >= 0 ? wd[w->d_wday[k]] : "");
+        wx_draw(&WXD[i], ok ? wx_icon(w->d_code[k], true) : -1, WX_SMALL, -1);
+        if (!ok) {
+            lv_label_set_text(WX.dtemp[i], "");
+            lv_label_set_text(WX.drain[i], "");
+            continue;
+        }
+        fmt_temp(a1, sizeof(a1), w->d_max[k]);
+        fmt_temp(a2, sizeof(a2), w->d_min[k]);
+        snprintf(b, sizeof(b), "%s #5E5E5E %s#", a1, a2);
+        lv_label_set_text(WX.dtemp[i], b);
+        if (w->d_rain[k] >= 0) snprintf(b, sizeof(b), "\xEF\x81\x83 %d %%", w->d_rain[k]); // Tropfen, Regenwahrscheinlichkeit
+        else b[0] = 0;
+        lv_label_set_text(WX.drain[i], b);
+        lv_obj_set_style_text_color(WX.drain[i], w->d_rain[k] >= 50 ? C_TEXT2 : C_TEXT3, 0);
+    }
+}
 
 // ---- 7 Bitaxe
 static void build_miner(lv_obj_t *t)
@@ -2409,20 +2655,20 @@ static void build_overlays(void)
     s_menu = rect(lv_scr_act(), 0, 0, W, H, C_BG);
     lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_EVENT_BUBBLE);
     const char *const *names = DECK_CARD_NAMES;
-    // 3 Spalten × 4 Reihen
+    // 3 Spalten × 5 Reihen
     for (int i = 0; i < DECK_CARDS; i++) {
-        lv_obj_t *b = panel(s_menu, xs[i % 3], 12 + (i / 3) * 64, 144, 60);
+        lv_obj_t *b = panel(s_menu, xs[i % 3], 10 + (i / 3) * 52, 144, 48);
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x111111), LV_STATE_PRESSED);
         char num[4];
         snprintf(num, sizeof(num), "%02d", i + 1);
-        txt(b, 144, &font_m12, C_TEXT3, num, 'l', 12, 22);
-        s_menu_name[i] = txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 48);
+        txt(b, 144, &font_m12, C_TEXT3, num, 'l', 12, 18);
+        s_menu_name[i] = txt(b, 144, &font_g20, C_TEXT, names[i], 'l', 12, 40);
         lv_obj_add_event_cb(b, menu_item_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         s_menu_tile[i] = b;
         // Schalter: Karte ein/aus
-        lv_obj_t *sw = rect(b, 144 - 12 - 34, 9, 34, 18, C_LINE);
+        lv_obj_t *sw = rect(b, 144 - 12 - 34, 7, 34, 18, C_LINE);
         lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, 0);
         lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(sw, LV_OBJ_FLAG_EVENT_BUBBLE);
@@ -2486,6 +2732,7 @@ static void ui_timer_cb(lv_timer_t *t)
     update_miner(d);
     update_cost(d);
     clock_trend(d);
+    update_weather(d);
     update_halving(d);
     if (ticks % 10 == 0) update_age(d);
     data_unlock();
@@ -2905,9 +3152,10 @@ void ui_init(void)
     build_fees(tiles[6]);
     build_difficulty(tiles[7]);
     build_clock(tiles[8]);
-    build_miner(tiles[9]);
-    build_cost(tiles[10]);
-    build_lottery(tiles[11]);
+    build_weather(tiles[CARD_WEATHER]);
+    build_miner(tiles[10]);
+    build_cost(tiles[11]);
+    build_lottery(tiles[12]);
     if (!card_on(0)) car_jump(card_step(0, 1), false);
     build_overlays();
     toast_create();

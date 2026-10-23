@@ -102,6 +102,15 @@ static esp_err_t root_get(httpd_req_t *req)
     for (int i = 0; i <= NIGHT_COLORS; i++)
         nl += snprintf(ncol + nl, sizeof(ncol) - nl, "<option value=%d%s>%s</option>", i,
                        g_settings.night_color == i ? " selected" : "", NIGHT_COLOR_NAMES[i]);
+    // Wetter: eingetragener Ort und was das Display dazu gefunden hat
+    char wx_line[200];
+    data_lock();
+    const weather_t *w = &data_get()->wx;
+    if (!g_settings.wx_place[0]) snprintf(wx_line, sizeof(wx_line), "Name, Postleitzahl oder Koordinaten (Breite, Länge)");
+    else if (w->place[0] && !w->err[0]) snprintf(wx_line, sizeof(wx_line), "Gefunden: <span class=acc>%s</span>%s%s", w->place, w->region[0] ? " · " : "", w->region);
+    else if (w->err[0]) snprintf(wx_line, sizeof(wx_line), "<span class=acc>%s</span>", w->err);
+    else snprintf(wx_line, sizeof(wx_line), "wird gesucht …");
+    data_unlock();
     char ct[16];
     float c = g_settings.kwh_price * 100.0f;
     snprintf(ct, sizeof(ct), c == (int)c ? "%.0f" : "%.1f", c);
@@ -130,6 +139,9 @@ static esp_err_t root_get(httpd_req_t *req)
              "<label>Strompreis (ct/kWh)</label><input name=kwh_ct value='%s' inputmode=decimal maxlength=6>"
              "<div class=cards style='grid-template-columns:1fr'><label><input type=checkbox name=ereset value=1>"
              "Stromzähler zurücksetzen</label></div>"
+             "<div class=sec>Wetter</div>"
+             "<label>Ort</label><input name=wx value='%s' placeholder='z. B. Berlin, 80331 oder Frankfurt, DE' maxlength=47>"
+             "<p><small>%s</small></p>"
              "<div class=sec>Karten</div><input type=hidden name=cards value=1><div class=cards>%s</div>"
              "<button>Speichern &rarr;</button></form>"
              "<div class=sec>Firmware</div>"
@@ -137,7 +149,8 @@ static esp_err_t root_get(httpd_req_t *req)
              "<form method=post action=/ota style='display:flex;gap:10px'>"
              "<button name=a value=check style='margin-top:12px;background:#000;color:var(--fg);border:1px solid var(--line)'>Nach Updates suchen</button>"
              "%s</form>"
-             "<p style='margin-top:28px'><small>0 = Alarm aus · IP des Bitaxe steht im AxeOS-Webinterface</small></p>"
+             "<p style='margin-top:28px'><small>0 = Alarm aus · IP des Bitaxe steht im AxeOS-Webinterface · "
+             "Wetterdaten: <a href='https://open-meteo.com/'>Open-Meteo.com</a> (CC BY 4.0)</small></p>"
              "</main></body></html>",
              PAGE_HEAD, g_settings.wifi_ssid, s_scan_html,
              g_settings.wifi_pass[0] ? "unverändert lassen" : "", g_settings.bitaxe_host[0],
@@ -145,7 +158,7 @@ static esp_err_t root_get(httpd_req_t *req)
              g_settings.clock_style == 3 ? "selected" : "", g_settings.clock_style == 0 ? "selected" : "",
              g_settings.chart_style == 0 ? "selected" : "", g_settings.chart_style == 1 ? "selected" : "",
              g_settings.chart_style == 2 ? "selected" : "",
-             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, cards,
+             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, g_settings.wx_place, wx_line, cards,
              deck_version(), ota_line, ota_btn);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, html);
@@ -182,7 +195,7 @@ static void restart_cb(void *arg)
 
 static esp_err_t save_post(httpd_req_t *req)
 {
-    char body[1280] = {0};
+    char body[1536] = {0};
     int total = 0;
     while (total < (int)sizeof(body) - 1) {
         int r = httpd_req_recv(req, body + total, sizeof(body) - 1 - total);
@@ -205,6 +218,13 @@ static esp_err_t save_post(httpd_req_t *req)
     if (form_field(body, "al_lo", v, sizeof(v))) g_settings.alarm_lo = strtof(v, NULL);
     if (form_field(body, "n_from", v, sizeof(v))) { int h = atoi(v); if (h >= 0 && h < 24) g_settings.night_from = h; }
     if (form_field(body, "n_to", v, sizeof(v))) { int h = atoi(v); if (h >= 0 && h < 24) g_settings.night_to = h; }
+    if (form_field(body, "wx", v, sizeof(v))) {
+        char *p = v; // Leerzeichen am Rand und Zeichen entfernen, die die Seite stören
+        while (*p == ' ') p++;
+        for (char *q = p; *q; q++) if (strchr("<>'\"&", *q)) *q = ' ';
+        for (int n = strlen(p); n > 0 && p[n - 1] == ' '; n--) p[n - 1] = 0;
+        strlcpy(g_settings.wx_place, p, sizeof(g_settings.wx_place));
+    }
     if (form_field(body, "clk", v, sizeof(v))) g_settings.clock_style = atoi(v) == 0 ? 0 : 3;
     if (form_field(body, "ncol", v, sizeof(v))) { int c = atoi(v); if (c >= 0 && c <= NIGHT_COLORS) g_settings.night_color = c; }
     if (form_field(body, "aupd", v, sizeof(v))) g_settings.auto_update = atoi(v) != 0;

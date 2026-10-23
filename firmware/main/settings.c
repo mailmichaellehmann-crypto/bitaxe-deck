@@ -20,7 +20,8 @@ deck_settings_t g_settings = {
 };
 
 const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",    "USD / EUR", "Chart",      "Block", "Neuer Block", "Halving",
-                                                 "Gebühren", "Difficulty", "Uhr",       "Bitaxe", "Kosten",     "Lotterie"};
+                                                 "Gebühren", "Difficulty", "Uhr",       "Wetter", "Bitaxe",     "Kosten",
+                                                 "Lotterie"};
 
 const char *const NIGHT_COLOR_NAMES[NIGHT_COLORS + 1] = {"Bernstein", "Tiefrot", "Kerzenlicht", "Rosé",
                                                          "Phosphor",  "Eisblau", "Originalfarben"};
@@ -66,6 +67,7 @@ void settings_load(void)
     get_str(h, "ssid", g_settings.wifi_ssid, sizeof(g_settings.wifi_ssid));
     get_str(h, "pass", g_settings.wifi_pass, sizeof(g_settings.wifi_pass));
     for (int i = 0; i < DECK_MAX_MINERS; i++) get_str(h, MINER_KEYS[i], g_settings.bitaxe_host[i], sizeof(g_settings.bitaxe_host[i]));
+    get_str(h, "wx", g_settings.wx_place, sizeof(g_settings.wx_place));
     // Strompreis: neuer Schlüssel; vom alten nur selbst gesetzte Werte übernehmen (0,35 war der frühere Standard)
     uint32_t k;
     if (nvs_get_u32(h, "kwh2", &k) == ESP_OK) g_settings.kwh_price = k / 1000.0f;
@@ -88,13 +90,17 @@ void settings_load(void)
     uint16_t r;
     if (nvs_get_u16(h, "rot", &r) == ESP_OK) g_settings.rotate_s = r;
     if (nvs_get_u16(h, "cards", &r) == ESP_OK) {
-        uint8_t n = 9;
+        uint8_t n = 9, v = 1;
         get_u8(h, "cardsn", &n);
+        get_u8(h, "cardsv", &v); // Stand der Kartenliste: 2 = mit Wetter
         // ältere Firmware: neue Karten eingeschaltet einfügen
-        if (n < 10) r = card_insert(r, 8);  // Kosten
-        if (n < 11) r = card_insert(r, 4);  // Neuer Block
-        if (n < 12) r = card_insert(r, 5);  // Halving
-        if (n == 13) r = card_remove(r, 10); // Netzanteil (nur in einer Zwischenversion)
+        if (v < 2) {
+            if (n < 10) r = card_insert(r, 8);  // Kosten
+            if (n < 11) r = card_insert(r, 4);  // Neuer Block
+            if (n < 12) r = card_insert(r, 5);  // Halving
+            if (n == 13) r = card_remove(r, 10); // Netzanteil (nur in einer Zwischenversion)
+            r = card_insert(r, 9);              // Wetter
+        }
         g_settings.card_mask = r & DECK_CARDS_ALL;
     }
     if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;
@@ -113,6 +119,7 @@ void settings_save(void)
     nvs_set_str(h, "ssid", g_settings.wifi_ssid);
     nvs_set_str(h, "pass", g_settings.wifi_pass);
     for (int i = 0; i < DECK_MAX_MINERS; i++) nvs_set_str(h, MINER_KEYS[i], g_settings.bitaxe_host[i]);
+    nvs_set_str(h, "wx", g_settings.wx_place);
     nvs_set_u32(h, "kwh2", (uint32_t)(g_settings.kwh_price * 1000.0f + 0.5f));
     nvs_set_u32(h, "al_hi", (uint32_t)(g_settings.alarm_hi + 0.5f));
     nvs_set_u32(h, "al_lo", (uint32_t)(g_settings.alarm_lo + 0.5f));
@@ -131,6 +138,7 @@ void settings_save(void)
     nvs_set_u16(h, "rot", g_settings.rotate_s);
     nvs_set_u16(h, "cards", g_settings.card_mask);
     nvs_set_u8(h, "cardsn", DECK_CARDS);
+    nvs_set_u8(h, "cardsv", 2);
     nvs_commit(h);
     nvs_close(h);
 }

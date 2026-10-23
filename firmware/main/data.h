@@ -1,5 +1,5 @@
 #pragma once
-// Datenquellen: CoinGecko (Preis/Chart), mempool.space (Netzwerk) und AxeOS-API des Bitaxe
+// Datenquellen: CoinGecko (Preis/Chart), mempool.space (Netzwerk), AxeOS-API des Bitaxe und Open-Meteo (Wetter)
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -8,6 +8,7 @@
 #define CHART_PTS 120
 #define HIST_PTS 240 // 1 h bei 15 s Abstand
 #define BLOCKS_N 6
+#define WX_DAYS 6 // Wetter: heute und die nächsten 5 Tage
 
 typedef enum { RANGE_24H = 0, RANGE_7D, RANGE_30D, RANGE_1Y } chart_range_t;
 typedef enum { MINER_DEMO = 0, MINER_ONLINE, MINER_OFFLINE } miner_mode_t;
@@ -33,6 +34,23 @@ typedef struct {
     int fan_pct, fan_rpm, freq, core_mv, core_mv_set, wifi_rssi;
     char hostname[32], asic[16], version[24], pool[56], board[12];
 } miner_t;
+
+// Wetter am eingestellten Ort (Open-Meteo)
+typedef struct {
+    bool ok;            // Daten vorhanden (bei Fehlern bleiben die letzten stehen)
+    char place[48];     // gefundener Ort, z. B. „Berlin“
+    char region[64];    // Bundesland und Land (Browser-Seite)
+    char err[48];       // letzter Fehler, leer = in Ordnung
+    double lat, lon;
+    float temp, feels, wind; // °C, °C, km/h
+    int humidity, code;      // %, WMO-Wettercode
+    bool is_day;
+    int days;                                               // Einträge in d_*
+    int d_code[WX_DAYS], d_rain[WX_DAYS], d_wday[WX_DAYS]; // Code, Regenwahrscheinlichkeit (%, -1 = unbekannt), Wochentag (0 = So)
+    float d_max[WX_DAYS], d_min[WX_DAYS];
+    int64_t updated; // Unix-Sekunden des letzten erfolgreichen Abrufs
+    uint32_t ver;
+} weather_t;
 
 typedef struct {
     // Markt
@@ -82,6 +100,8 @@ typedef struct {
     double energy_day_wh;  // heute
     int64_t energy_since;  // Unix-Sekunden, 0 = Uhrzeit noch unbekannt
     uint32_t energy_day;   // Datum von energy_day_wh als JJJJMMTT
+
+    weather_t wx;
 } deck_data_t;
 
 void data_start(void);

@@ -25,9 +25,10 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 7 | Blockzeit & Gebühren | Blockhöhe, Sats pro USD, Gebühren niedrig/mittel/hoch in sat/vB und $ |
 | 8 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
 | 9 | Uhr | LED-Punktanzeige (Standard): Siebensegment-Ziffern aus quadratischen LED-Punkten in der Trendfarbe (hellgrün gestiegen, pink gefallen), Sekundenreihe, Datum; wahlweise klassisch |
-| 10 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
-| 11 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
-| 12 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
+| 10 | Wetter | aktuelles Wetter am eingestellten Ort mit bewegtem Pixel-Symbol, Temperatur, Wetterlage, heute Hoch/Tief, gefühlt, Wind, Regenwahrscheinlichkeit; darunter die nächsten 5 Tage (Daten: Open-Meteo) |
+| 11 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
+| 12 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
+| 13 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
 
 Gestaltung im Stil von Strike (eigener Code): tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen,
 Geist Mono für Beschriftungen, feine Rahmen, Punktmatrix-Chart, Pixel-Mosaik als Kursverlauf.
@@ -92,6 +93,21 @@ Datum steht die Änderung („BTC · 24H +2,34 %“).
 Auf der Browser-Seite lässt sich unter „Uhr“ stattdessen die klassische Uhr wählen; sie zeigt die
 Änderung ebenfalls farbig unter dem Datum.
 
+## Wetter
+
+Aktuelles Wetter und die Aussicht für die nächsten 5 Tage von [Open-Meteo](https://open-meteo.com/)
+(kostenlos, ohne Schlüssel; Daten unter CC BY 4.0). Den **Ort** trägt man auf der Browser-Seite unter
+„Wetter“ ein: Name („Berlin“), Postleitzahl („80331“), mit Ländercode bei gleichnamigen Orten
+(„Frankfurt, DE“) oder Koordinaten („52.52, 13.41“). Das Display sucht den Ort einmal nach dem Start und
+zeigt auf der Browser-Seite, was es gefunden hat. Die Wetterdaten lädt es alle 15 Minuten neu.
+
+Die Wettersymbole sind Pixel-Mosaike aus 13 × 13 Zellen wie der Kursverlauf auf der Preiskarte: Sonne
+und Blitz in Pink, Wolken, Regen, Schnee und Nebel in Graustufen, nachts Mond statt Sonne. Das große
+Symbol bewegt sich leicht – Regen und Schnee fallen, die Strahlen der Sonne glimmen im Wechsel, Nebel
+zieht, bei Gewitter blitzt es. Rechts daneben stehen Hoch/Tief von heute, die gefühlte Temperatur, Wind
+und die Regenwahrscheinlichkeit, unten die nächsten 5 Tage mit Hoch/Tief und Regenwahrscheinlichkeit.
+Der Punkt neben dem Ort ist pink, solange die Daten aktuell sind (grau: älter als eine Stunde).
+
 ## Nachtmodus
 
 Im eingestellten Zeitfenster schaltet das Display nach 30 Sekunden ohne Berührung auf schwache
@@ -137,6 +153,7 @@ weder beim Blättern noch beim automatischen Seitenwechsel. Eine Karte bleibt im
 
 Im Browser lässt sich außerdem die **Chart-Fläche** wählen: Punkte (Standard), ohne Verlauf (nur die Linie)
 oder Pixel (Säulen aus Pixel-Zellen wie das Mosaik der Preiskarte).
+Unter **Wetter** wird der Ort fürs Wetter eingetragen (siehe oben).
 Unter **Karten** stehen dort dieselben Ein/Aus-Schalter wie im Kartenmenü.
 
 ## Einrichtung (einmalig)
@@ -181,7 +198,7 @@ Falls sich das Board nicht flashen lässt („No serial data received“): USB-K
 |-------|---------|
 | `main/board.c` | Pins, ST7796 über i80, FT6336U-Touch über I2C, LVGL-Anbindung |
 | `main/ui.c` | alle Karten im Strike-Stil, Chart und Mosaik als vorgerenderte Bilder, Einstellungen, Menü |
-| `main/data.c` | Abruf von CoinGecko, mempool.space und der AxeOS-API, Demo-Werte |
+| `main/data.c` | Abruf von CoinGecko, mempool.space, der AxeOS-API und Open-Meteo (Wetter), Demo-Werte |
 | `main/net.c` | WLAN, Uhrzeit (NTP), Setup-Portal |
 | `main/settings.c` | Einstellungen im NVS |
 | `main/fonts/` | mit `lv_font_conv` erzeugte Schriften |
