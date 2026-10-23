@@ -4,12 +4,14 @@
 #include <stdint.h>
 
 #define DECK_MAX_MINERS 1
-#define DECK_CARDS 13
+#define DECK_CARDS 14
 #define DECK_CARDS_ALL ((1u << DECK_CARDS) - 1)
 extern const char *const DECK_CARD_NAMES[DECK_CARDS];
 #define NIGHT_COLORS 6 // Farbtöne; danach als letzte Wahl „Originalfarben“
 extern const char *const NIGHT_COLOR_NAMES[NIGHT_COLORS + 1];
 extern const uint32_t NIGHT_COLOR_RGB[NIGHT_COLORS];
+#define NEWS_SOURCES 3
+extern const char *const NEWS_SOURCE_NAMES[NEWS_SOURCES];
 
 typedef struct {
     char wifi_ssid[33];
@@ -31,9 +33,10 @@ typedef struct {
     uint8_t brightness;  // 5..100 %
     uint8_t chart_style; // Chart-Fläche: 0 = Punkte, 1 = ohne Verlauf, 2 = Pixel (Mosaik)
     bool auto_update;    // OTA-Updates automatisch installieren
-    uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 12 = Lotterie, siehe DECK_CARD_NAMES)
+    uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 13 = News, siehe DECK_CARD_NAMES)
     uint8_t card_order[DECK_CARDS]; // Reihenfolge beim Blättern: Kartennummern (Index in DECK_CARD_NAMES)
     char wx_place[48];   // Ort fürs Wetter: Name, Postleitzahl oder „Breite, Länge“; leer = nicht eingestellt
+    uint8_t news_src;    // News-Quelle: Index in NEWS_SOURCE_NAMES
 } deck_settings_t;
 
 extern deck_settings_t g_settings;

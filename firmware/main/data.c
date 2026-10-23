@@ -58,8 +58,8 @@ static esp_err_t http_evt(esp_http_client_event_t *e)
     return ESP_OK;
 }
 
-// Lädt eine URL komplett und parst sie als JSON (NULL bei Fehler)
-static cJSON *http_json(const char *url, int timeout_ms, char *err, int errlen)
+// Lädt eine URL komplett (Puffer im PSRAM, mit free freigeben; NULL bei Fehler)
+static char *http_text(const char *url, int timeout_ms, const char *accept, char *err, int errlen)
 {
     http_buf_t b = {0};
     esp_http_client_config_t cfg = {
@@ -73,20 +73,28 @@ static cJSON *http_json(const char *url, int timeout_ms, char *err, int errlen)
         .buffer_size_tx = 1024,
     };
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
-    esp_http_client_set_header(c, "Accept", "application/json");
+    esp_http_client_set_header(c, "Accept", accept);
     esp_err_t r = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
     esp_http_client_cleanup(c);
-    cJSON *j = NULL;
-    if (r == ESP_OK && status == 200 && b.buf) {
-        j = cJSON_Parse(b.buf);
-        if (!j && err) snprintf(err, errlen, "Ungültige Antwort");
-    } else if (err) {
+    if (r == ESP_OK && status == 200 && b.buf) return b.buf;
+    if (err) {
         if (r != ESP_OK) snprintf(err, errlen, "%s", r == ESP_ERR_HTTP_CONNECT ? "Keine Verbindung" : esp_err_to_name(r));
         else snprintf(err, errlen, "HTTP %d", status);
     }
-    if (r != ESP_OK || status != 200) ESP_LOGW(TAG, "GET %s -> %s / %d", url, esp_err_to_name(r), status);
+    ESP_LOGW(TAG, "GET %s -> %s / %d", url, esp_err_to_name(r), status);
     free(b.buf);
+    return NULL;
+}
+
+// Lädt eine URL komplett und parst sie als JSON (NULL bei Fehler)
+static cJSON *http_json(const char *url, int timeout_ms, char *err, int errlen)
+{
+    char *t = http_text(url, timeout_ms, "application/json", err, errlen);
+    if (!t) return NULL;
+    cJSON *j = cJSON_Parse(t);
+    if (!j && err) snprintf(err, errlen, "Ungültige Antwort");
+    free(t);
     return j;
 }
 
@@ -358,6 +366,234 @@ static int fetch_weather(void)
     data_unlock();
     cJSON_Delete(j);
     return 15 * 60000; // Open-Meteo rechnet alle 15 Minuten neu
+}
+
+// ------------------------------------------------------------------ Bitcoin-News
+
+// Quellen in der Reihenfolge von NEWS_SOURCE_NAMES; Crypto Vision (cryptocurrency.cv) ohne Schlüssel,
+// die anderen als RSS-Feed
+static const struct { const char *url; bool rss; } NEWS_URL[NEWS_SOURCES] = {
+    {"https://cryptocurrency.cv/api/bitcoin?limit=40", false},
+    {"https://www.blocktrainer.de/feed.xml", true},
+    {"https://bitcoinmagazine.com/feed", true},
+};
+
+// Zeichen, die die Schriften der Karte haben (Emojis u. Ä. fallen weg)
+static bool font_has(uint32_t c)
+{
+    return (c >= 0x20 && c <= 0x7E) || (c >= 0xA0 && c <= 0xFF) || (c >= 0x2013 && c <= 0x201E) || c == 0x2022 || c == 0x2026 ||
+           c == 0x20AC;
+}
+
+static void put_utf8(char **o, const char *end, uint32_t c)
+{
+    char b[4];
+    int n = c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
+    if (n == 1) b[0] = c;
+    else if (n == 2) { b[0] = 0xC0 | c >> 6; b[1] = 0x80 | (c & 0x3F); }
+    else { b[0] = 0xE0 | c >> 12; b[1] = 0x80 | ((c >> 6) & 0x3F); b[2] = 0x80 | (c & 0x3F); }
+    if (*o + n > end) return;
+    memcpy(*o, b, n);
+    *o += n;
+}
+
+// Schlagzeile säubern: CDATA, HTML-Entities, unbekannte Zeichen, mehrfacher Leerraum
+static void news_clean(char *out, size_t len, const char *s, int n)
+{
+    const char *e = s + n;
+    while (s < e && isspace((unsigned char)*s)) s++;
+    if (e - s >= 12 && !strncmp(s, "<![CDATA[", 9)) {
+        s += 9;
+        for (const char *q = s; q + 3 <= e; q++)
+            if (!strncmp(q, "]]>", 3)) { e = q; break; }
+    }
+    char *o = out, *end = out + len - 1;
+    bool sp = true;
+    while (s < e) {
+        uint32_t c = (unsigned char)*s;
+        if (c == '&') {
+            const char *semi = memchr(s, ';', e - s < 10 ? e - s : 10);
+            if (semi) {
+                char ent[10] = {0};
+                memcpy(ent, s + 1, semi - s - 1);
+                c = ent[0] == '#' ? (uint32_t)strtoul(ent + 1 + (ent[1] == 'x'), NULL, ent[1] == 'x' ? 16 : 10)
+                    : !strcmp(ent, "amp")  ? '&'
+                    : !strcmp(ent, "lt")   ? '<'
+                    : !strcmp(ent, "gt")   ? '>'
+                    : !strcmp(ent, "quot") ? '"'
+                    : !strcmp(ent, "apos") ? '\''
+                    : !strcmp(ent, "nbsp") ? ' '
+                                           : 0;
+                s = semi + 1;
+            } else s++;
+        } else if (c < 0x80) s++;
+        else { // UTF-8 lesen
+            int k = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+            c &= k == 3 ? 0x07 : k == 2 ? 0x0F : 0x1F;
+            s++;
+            for (; k > 0 && s < e && ((unsigned char)*s & 0xC0) == 0x80; k--, s++) c = c << 6 | ((unsigned char)*s & 0x3F);
+        }
+        if (c == 0xA0 || c == '\n' || c == '\r' || c == '\t') c = ' ';
+        if (!font_has(c)) continue;
+        if (c == ' ' && sp) continue;
+        sp = c == ' ';
+        put_utf8(&o, end, c);
+    }
+    while (o > out && o[-1] == ' ') o--;
+    *o = 0;
+}
+
+static int64_t utc_secs(int y, int mo, int d, int h, int mi, int s)
+{
+    y -= mo <= 2; // Tage seit 1970 (H. Hinnant, days_from_civil)
+    int era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = y - era * 400, doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    int64_t days = era * 146097LL + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    return days * 86400 + h * 3600 + mi * 60 + s;
+}
+
+// „2026-10-23T10:30:18.000Z“
+static int64_t parse_iso(const char *s)
+{
+    int y, mo, d, h, mi, se;
+    if (!s || sscanf(s, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return 0;
+    return utc_secs(y, mo, d, h, mi, se);
+}
+
+// „Fri, 23 Oct 2026 09:49:29 +0200“
+static int64_t parse_rfc822(const char *s)
+{
+    static const char M[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    char mon[4] = "", tz[8] = "";
+    int d, y, h, mi, se;
+    const char *p = strchr(s, ',');
+    if (sscanf(p ? p + 1 : s, "%d %3s %d %d:%d:%d %7s", &d, mon, &y, &h, &mi, &se, tz) < 6) return 0;
+    const char *q = strstr(M, mon);
+    if (!q || !mon[0]) return 0;
+    int64_t t = utc_secs(y, (q - M) / 3 + 1, d, h, mi, se);
+    if ((tz[0] == '+' || tz[0] == '-') && strlen(tz) >= 5) {
+        int off = ((tz[1] - '0') * 10 + tz[2] - '0') * 3600 + ((tz[3] - '0') * 10 + tz[4] - '0') * 60;
+        t -= tz[0] == '+' ? off : -off;
+    }
+    return t;
+}
+
+// Inhalt von <tag>…</tag> zwischen p und end
+static const char *xml_tag(const char *p, const char *end, const char *tag, int *len)
+{
+    char a[16], b[16];
+    snprintf(a, sizeof(a), "<%s>", tag);
+    snprintf(b, sizeof(b), "</%s>", tag);
+    const char *s = strstr(p, a);
+    if (!s || s > end) return NULL;
+    s += strlen(a);
+    const char *e = strstr(s, b);
+    if (!e || e > end) return NULL;
+    *len = e - s;
+    return s;
+}
+
+static int news_rss(const char *x, news_item_t *out, const char *src)
+{
+    int n = 0;
+    for (const char *p = x; n < NEWS_N && (p = strstr(p, "<item")) != NULL;) {
+        const char *end = strstr(p, "</item>");
+        if (!end) break;
+        int tl, dl;
+        const char *t = xml_tag(p, end, "title", &tl), *d = xml_tag(p, end, "pubDate", &dl);
+        if (t) {
+            news_clean(out[n].title, sizeof(out[n].title), t, tl);
+            char ds[40] = "";
+            if (d) memcpy(ds, d, dl < 39 ? dl : 39);
+            out[n].ts = parse_rfc822(ds);
+            strlcpy(out[n].source, src, sizeof(out[n].source));
+            if (out[n].title[0]) n++;
+        }
+        p = end + 7;
+    }
+    return n;
+}
+
+static int news_cv(const cJSON *j, news_item_t *out)
+{
+    int n = 0;
+    const cJSON *a;
+    cJSON_ArrayForEach(a, cJSON_GetObjectItem(j, "articles"))
+    {
+        if (n >= NEWS_N) break;
+        const char *t = cJSON_GetStringValue(cJSON_GetObjectItem(a, "title"));
+        const char *src = cJSON_GetStringValue(cJSON_GetObjectItem(a, "source"));
+        if (!t || (src && !strcmp(src, "Stacker News"))) continue; // dort vor allem Forums-Threads
+        news_clean(out[n].title, sizeof(out[n].title), t, strlen(t));
+        strlcpy(out[n].source, src ? src : "", sizeof(out[n].source));
+        out[n].ts = parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(a, "pubDate")));
+        if (out[n].title[0]) n++;
+    }
+    return n;
+}
+
+// gibt die Wartezeit bis zum nächsten Abruf zurück (ms)
+static int fetch_news(void)
+{
+    int src = g_settings.news_src < NEWS_SOURCES ? g_settings.news_src : 0;
+    news_item_t *it = heap_caps_calloc(NEWS_N, sizeof(news_item_t), MALLOC_CAP_SPIRAM);
+    if (!it) return 60000;
+    char err[48] = "";
+    int n = 0;
+    if (NEWS_URL[src].rss) {
+        char *x = http_text(NEWS_URL[src].url, 15000, "application/rss+xml, application/xml, */*", err, sizeof(err));
+        if (x) n = news_rss(x, it, NEWS_SOURCE_NAMES[src]);
+        free(x);
+    } else {
+        cJSON *j = http_json(NEWS_URL[src].url, 15000, err, sizeof(err));
+        if (j) n = news_cv(j, it);
+        cJSON_Delete(j);
+    }
+    for (int i = 1; i < n; i++) // neueste zuerst
+        for (int k = i; k > 0 && it[k].ts > it[k - 1].ts; k--) {
+            news_item_t tmp = it[k];
+            it[k] = it[k - 1];
+            it[k - 1] = tmp;
+        }
+    data_lock();
+    if (n > 0) {
+        memcpy(s_d.news.item, it, sizeof(news_item_t) * n);
+        s_d.news.n = n;
+        s_d.news.err[0] = 0;
+        s_d.news.updated = time(NULL);
+    } else strlcpy(s_d.news.err, err[0] ? err : "Keine Schlagzeilen", sizeof(s_d.news.err));
+    s_d.news.ver++;
+    data_unlock();
+    free(it);
+    return n > 0 ? 10 * 60000 : 2 * 60000;
+}
+
+// Kursverlauf in USD für „Kurs seit Meldung“: Kraken, 15-Minuten-Kerzen der letzten 7,5 Tage in einem
+// Abruf (ohne Schlüssel; schont das Limit von CoinGecko). Je Kerze der Schlusskurs am Ende der Kerze.
+static void fetch_series(void)
+{
+    cJSON *j = http_json("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=15", 15000, NULL, 0);
+    const cJSON *res = cJSON_GetObjectItem(j, "result"), *rows = NULL, *r;
+    cJSON_ArrayForEach(r, res) if (cJSON_IsArray(r)) { rows = r; break; } // „XXBTZUSD“
+    uint32_t now = time(NULL);
+    if (s_d.px && cJSON_GetArraySize(rows) >= 2) {
+        data_lock();
+        int k = 0;
+        cJSON_ArrayForEach(r, rows)
+        {
+            if (k >= PXS_N) break;
+            const char *close = cJSON_GetStringValue(cJSON_GetArrayItem(r, 4));
+            uint32_t t = (uint32_t)cJSON_GetArrayItem(r, 0)->valuedouble + 900;
+            if (!close) continue;
+            s_d.px->t[k] = t < now ? t : now; // letzte Kerze läuft noch
+            s_d.px->v[k] = strtof(close, NULL);
+            if (k == 0 || s_d.px->t[k] > s_d.px->t[k - 1]) k++;
+        }
+        s_d.px->n = k;
+        s_d.px_ver++;
+        data_unlock();
+    }
+    cJSON_Delete(j);
 }
 
 // ------------------------------------------------------------------ Netzwerk
@@ -675,7 +911,7 @@ static void miner_task(void *arg)
 
 static void data_task(void *arg)
 {
-    int64_t next_price = 0, next_net = 0, next_chart = 0, next_wx = 0;
+    int64_t next_price = 0, next_net = 0, next_chart = 0, next_wx = 0, next_news = 0, next_px = 0;
     chart_range_t cur = (chart_range_t)g_settings.chart_range;
     bool spark_loaded = true; // Sparkline wird nicht mehr angezeigt
     for (;;) {
@@ -708,6 +944,13 @@ static void data_task(void *arg)
                 next_net = now + 30000;
             }
             if (now >= next_wx) next_wx = esp_timer_get_time() / 1000 + fetch_weather();
+            if ((g_settings.card_mask >> 13) & 1) { // nur, wenn die News-Karte an ist
+                if (now >= next_news) next_news = esp_timer_get_time() / 1000 + fetch_news();
+                if (now >= next_px) {
+                    fetch_series();
+                    next_px = now + 10 * 60000;
+                }
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(250));
     }
@@ -718,6 +961,7 @@ void data_start(void)
     s_mtx = xSemaphoreCreateMutex();
     s_d.chart_range = (chart_range_t)g_settings.chart_range;
     s_d.hist_demo = true;
+    s_d.px = heap_caps_calloc(1, sizeof(px_series_t), MALLOC_CAP_SPIRAM);
     energy_load();
     // Demo-Verlauf vorbelegen, damit der Chart nie leer ist
     for (int i = 0; i < HIST_PTS; i++) {

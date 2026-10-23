@@ -97,16 +97,23 @@ static esp_err_t root_get(httpd_req_t *req)
     default: snprintf(ota_line, sizeof(ota_line), "noch nicht geprüft"); break;
     }
     // Karten in der eingestellten Reihenfolge, mit ↑ ↓ verschiebbar (schreibt das versteckte Feld „order“)
-    char cards[3600], order[48];
+    const size_t cards_len = 4600; // auf dem Heap: der Stack des Webservers reicht dafür nicht
+    char *cards = malloc(cards_len), order[48];
+    if (!cards) { free(html); return httpd_resp_send_500(req); }
     int cl = 0, ol = 0;
     for (int p = 0; p < DECK_CARDS; p++) {
         int i = g_settings.card_order[p];
-        cl += snprintf(cards + cl, sizeof(cards) - cl,
+        cl += snprintf(cards + cl, cards_len - cl,
                        "<div class=ci data-id=%d><label><i>%02d</i><input type=checkbox name=c%d value=1%s>%s</label>"
                        "<button type=button onclick=mv(this,-1)>&uarr;</button><button type=button onclick=mv(this,1)>&darr;</button></div>",
                        i, p + 1, i, (g_settings.card_mask >> i) & 1 ? " checked" : "", DECK_CARD_NAMES[i]);
         ol += snprintf(order + ol, sizeof(order) - ol, "%s%d", p ? "," : "", i);
     }
+    char nsrc[200];
+    int sl = 0;
+    for (int i = 0; i < NEWS_SOURCES; i++)
+        sl += snprintf(nsrc + sl, sizeof(nsrc) - sl, "<option value=%d%s>%s</option>", i, g_settings.news_src == i ? " selected" : "",
+                       NEWS_SOURCE_NAMES[i]);
     char ncol[400];
     int nl = 0;
     for (int i = 0; i <= NIGHT_COLORS; i++)
@@ -152,6 +159,9 @@ static esp_err_t root_get(httpd_req_t *req)
              "<div class=sec>Wetter</div>"
              "<label>Ort</label><input name=wx value='%s' placeholder='z. B. Berlin, 80331 oder Frankfurt, DE' maxlength=47>"
              "<p><small>%s</small></p>"
+             "<div class=sec>News</div>"
+             "<label>Quelle der Schlagzeilen</label><select name=news>%s</select>"
+             "<p><small>Crypto Vision: englisch, viele Quellen · Blocktrainer: deutsch · Bitcoin Magazine: englisch</small></p>"
              "<div class=sec>Karten</div><p><small>Reihenfolge mit &uarr; &darr; – am Display: im Kartenmenü eine Kachel halten und ziehen</small></p>"
              "<input type=hidden name=cards value=1><input type=hidden name=order id=order value='%s'><div class='cards ord' id=cl>%s</div>"
              "<script>function mv(b,d){var r=b.parentNode,l=r.parentNode,o=d<0?r.previousElementSibling:r.nextElementSibling;"
@@ -173,10 +183,11 @@ static esp_err_t root_get(httpd_req_t *req)
              g_settings.clock_style == 3 ? "selected" : "", g_settings.clock_style == 0 ? "selected" : "",
              g_settings.chart_style == 0 ? "selected" : "", g_settings.chart_style == 1 ? "selected" : "",
              g_settings.chart_style == 2 ? "selected" : "",
-             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, g_settings.wx_place, wx_line, order, cards,
+             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, g_settings.wx_place, wx_line, nsrc, order, cards,
              deck_version(), ota_line, ota_btn);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, html);
+    free(cards);
     free(html);
     return ESP_OK;
 }
@@ -240,6 +251,7 @@ static esp_err_t save_post(httpd_req_t *req)
         for (int n = strlen(p); n > 0 && p[n - 1] == ' '; n--) p[n - 1] = 0;
         strlcpy(g_settings.wx_place, p, sizeof(g_settings.wx_place));
     }
+    if (form_field(body, "news", v, sizeof(v))) { int c = atoi(v); if (c >= 0 && c < NEWS_SOURCES) g_settings.news_src = c; }
     if (form_field(body, "clk", v, sizeof(v))) g_settings.clock_style = atoi(v) == 0 ? 0 : 3;
     if (form_field(body, "ncol", v, sizeof(v))) { int c = atoi(v); if (c >= 0 && c <= NIGHT_COLORS) g_settings.night_color = c; }
     if (form_field(body, "aupd", v, sizeof(v))) g_settings.auto_update = atoi(v) != 0;

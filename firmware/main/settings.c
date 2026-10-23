@@ -21,7 +21,8 @@ deck_settings_t g_settings = {
 
 const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",    "USD / EUR", "Chart",      "Block", "Neuer Block", "Halving",
                                                  "Gebühren", "Difficulty", "Uhr",       "Wetter", "Bitaxe",     "Kosten",
-                                                 "Lotterie"};
+                                                 "Lotterie", "News"};
+const char *const NEWS_SOURCE_NAMES[NEWS_SOURCES] = {"Crypto Vision", "Blocktrainer", "Bitcoin Magazine"};
 
 const char *const NIGHT_COLOR_NAMES[NIGHT_COLORS + 1] = {"Bernstein", "Tiefrot", "Kerzenlicht", "Rosé",
                                                          "Phosphor",  "Eisblau", "Originalfarben"};
@@ -102,6 +103,7 @@ void settings_load(void)
     get_u8(h, "n_to", &g_settings.night_to);
     get_u8(h, "ncol", &g_settings.night_color);
     get_u8(h, "clk", &g_settings.clock_style);
+    get_u8(h, "news", &g_settings.news_src);
     get_u8(h, "range", &g_settings.chart_range);
     get_u8(h, "bright", &g_settings.brightness);
     get_u8(h, "cstyle", &g_settings.chart_style);
@@ -110,7 +112,7 @@ void settings_load(void)
     if (nvs_get_u16(h, "cards", &r) == ESP_OK) {
         uint8_t n = 9, v = 1;
         get_u8(h, "cardsn", &n);
-        get_u8(h, "cardsv", &v); // Stand der Kartenliste: 2 = mit Wetter
+        get_u8(h, "cardsv", &v); // Stand der Kartenliste: 2 = mit Wetter, 3 = mit News
         // ältere Firmware: neue Karten eingeschaltet einfügen
         if (v < 2) {
             if (n < 10) r = card_insert(r, 8);  // Kosten
@@ -119,6 +121,7 @@ void settings_load(void)
             if (n == 13) r = card_remove(r, 10); // Netzanteil (nur in einer Zwischenversion)
             r = card_insert(r, 9);              // Wetter
         }
+        if (v < 3) r |= 1u << 13; // News (neue Karten kommen ab jetzt hinten dazu)
         g_settings.card_mask = r & DECK_CARDS_ALL;
     }
     if (!g_settings.card_mask) g_settings.card_mask = DECK_CARDS_ALL;
@@ -130,6 +133,7 @@ void settings_load(void)
     if (g_settings.chart_style > 2) g_settings.chart_style = 0;
     if (g_settings.night_color > NIGHT_COLORS) g_settings.night_color = 0;
     if (g_settings.clock_style != 0) g_settings.clock_style = 3; // Pixel-Uhr und Klappzahlen -> LED
+    if (g_settings.news_src >= NEWS_SOURCES) g_settings.news_src = 0;
     if (g_settings.brightness < 5 || g_settings.brightness > 100) g_settings.brightness = 80;
 }
 
@@ -153,13 +157,14 @@ void settings_save(void)
     nvs_set_u8(h, "n_to", g_settings.night_to);
     nvs_set_u8(h, "ncol", g_settings.night_color);
     nvs_set_u8(h, "clk", g_settings.clock_style);
+    nvs_set_u8(h, "news", g_settings.news_src);
     nvs_set_u8(h, "range", g_settings.chart_range);
     nvs_set_u8(h, "bright", g_settings.brightness);
     nvs_set_u8(h, "cstyle", g_settings.chart_style);
     nvs_set_u16(h, "rot", g_settings.rotate_s);
     nvs_set_u16(h, "cards", g_settings.card_mask);
     nvs_set_u8(h, "cardsn", DECK_CARDS);
-    nvs_set_u8(h, "cardsv", 2);
+    nvs_set_u8(h, "cardsv", 3);
     nvs_set_blob(h, "order", g_settings.card_order, sizeof(g_settings.card_order));
     nvs_commit(h);
     nvs_close(h);

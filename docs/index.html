@@ -190,6 +190,7 @@ footer a{color:var(--text2)}
         <img class="on" src="img/karte-preis.png" alt="Preiskarte: Bitcoin-Kurs groß mit Pixel-Mosaik">
         <img src="img/karte-uhr.png" alt="LED-Uhr">
         <img src="img/karte-wetter.png" alt="Wetter-Karte mit Pixel-Symbolen">
+        <img src="img/karte-news.png" alt="Bitcoin-News mit Kurs seit Meldung">
         <img src="img/karte-halving.png" alt="Halving-Karte aus Pixel-Sand">
         <img src="img/karte-neuer-block.png" alt="Karte Neuer Block">
         <img src="img/karte-lotterie.png" alt="Share-Lotterie">
@@ -204,8 +205,8 @@ footer a{color:var(--text2)}
 <section>
   <div class="wrap">
     <div class="three">
-      <div class="box"><div class="num">13</div><h3>Karten</h3><p>Vom Kurs übers Wetter bis zur Share-Lotterie. Wischen oder an den Rand tippen, endlos im Kreis – jede Karte lässt sich einzeln abschalten.</p></div>
-      <div class="box"><div class="num">0</div><h3>Rechner nötig</h3><p>Das Display holt alles selbst über WLAN: Kurse, Blockdaten, Wetter und die Werte deines Bitaxe im Heimnetz. Keine Konten, keine API-Schlüssel.</p></div>
+      <div class="box"><div class="num">14</div><h3>Karten</h3><p>Vom Kurs über Wetter und News bis zur Share-Lotterie. Wischen oder an den Rand tippen, endlos im Kreis – jede Karte lässt sich einzeln abschalten.</p></div>
+      <div class="box"><div class="num">0</div><h3>Rechner nötig</h3><p>Das Display holt alles selbst über WLAN: Kurse, Blockdaten, Wetter, Schlagzeilen und die Werte deines Bitaxe im Heimnetz. Keine Konten, keine API-Schlüssel.</p></div>
       <div class="box"><div class="num acc">OTA</div><h3>Updates über WLAN</h3><p>Neue Versionen kommen automatisch aus den GitHub-Releases – mit Rückfall auf die alte Version, falls etwas nicht startet.</p></div>
     </div>
   </div>
@@ -327,6 +328,7 @@ footer a{color:var(--text2)}
           <li><span>Anzeige</span><span>Nachtmodus-Zeiten und -Farbe, Uhr (LED-Punkte oder klassisch), Chart-Fläche (Punkte, Linie, Pixel), automatische Updates.</span></li>
           <li><span>Mining-Kosten</span><span>Strompreis (Standard 30 ct/kWh) und Zurücksetzen des Stromzählers.</span></li>
           <li><span>Wetter</span><span>Ort als Name, Postleitzahl oder Koordinaten – das Display zeigt, was es gefunden hat.</span></li>
+          <li><span>News</span><span>Quelle der Schlagzeilen: Crypto Vision, Blocktrainer oder Bitcoin Magazine.</span></li>
           <li><span>Karten</span><span>Dieselben Ein/Aus-Schalter wie im Kartenmenü, dazu die Reihenfolge mit ↑ und ↓.</span></li>
         </ul>
       </div>
@@ -336,7 +338,7 @@ footer a{color:var(--text2)}
       <div>
         <div class="cap">Kartenmenü</div>
         <h3 style="font-size:30px;letter-spacing:-.8px;margin:10px 0 14px">Deine Auswahl, deine Reihenfolge.</h3>
-        <p>Dreizehn Kacheln, jede mit eigenem Schalter. Ausgeschaltete Karten erscheinen weder beim Blättern noch beim automatischen Seitenwechsel. Die aktuelle Karte ist pink umrandet. Kachel halten und ziehen legt die Reihenfolge fest – die anderen rücken nach.</p>
+        <p>Vierzehn Kacheln, jede mit eigenem Schalter. Ausgeschaltete Karten erscheinen weder beim Blättern noch beim automatischen Seitenwechsel. Die aktuelle Karte ist pink umrandet. Kachel halten und ziehen legt die Reihenfolge fest – die anderen rücken nach.</p>
       </div>
     </div>
   </div>
@@ -399,6 +401,7 @@ python -m esptool --chip esp32s3 write_flash 0x0 bitaxe_deck_full.bin</code></pr
         <li><span>Firmware</span><span>ESP-IDF 5.3 · LVGL 8.4 · esp_lcd_st7796 · esp_websocket_client</span></li>
         <li><span>Schriften</span><span>Geist und Geist Mono (SIL Open Font License)</span></li>
         <li><span>Wetterdaten</span><span><a href="https://open-meteo.com/">Open-Meteo.com</a> (CC BY 4.0)</span></li>
+        <li><span>News</span><span><a href="https://cryptocurrency.cv">Crypto Vision</a>, RSS von Blocktrainer und Bitcoin Magazine</span></li>
       </ul>
       <ul class="list">
         <li><span>Kurse</span><span>CoinGecko – Preis, 24h-Änderung und Chart in USD und EUR</span></li>
@@ -454,6 +457,7 @@ const CARDS = [
   ["Wetter", "karte-wetter", "Aktuelles Wetter mit bewegtem Pixel-Symbol und die nächsten 5 Tage. Ort im Browser einstellbar, Daten von Open-Meteo."],
   ["Bitaxe", "karte-bitaxe", "Hashrate, Session- und Bestwert gegenüber dem Netzwerk, ASIC- und VR-Temperatur, Lüfter."],
   ["Mining-Kosten", "karte-kosten", "Verbrauch, Kosten pro Tag, Monat und Jahr, das Lotterielos in sats und ein Stromzähler."],
+  ["News", "karte-news", "Bitcoin-Schlagzeilen mit Alter in Blöcken – und daneben, wie sich der Kurs seit der Meldung bewegt hat."],
   ["Share-Lotterie", "karte-lotterie", "Jeder Hash deines Bitaxe live als Punkt im Histogramm – ganz rechts wartet der Block."],
 ];
 document.getElementById("cards").innerHTML = CARDS.map(([n, f, d], i) =>

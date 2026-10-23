@@ -30,6 +30,7 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 11 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
 | 12 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
 | 13 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
+| 14 | News | Bitcoin-Schlagzeilen (Crypto Vision, Blocktrainer oder Bitcoin Magazine), vier je Seite; zu jeder Meldung ihr Alter in Blöcken und wie sich der Kurs seitdem bewegt hat (Prozent und Mini-Kurve) |
 
 Gestaltung im Stil von Strike (eigener Code): tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen,
 Geist Mono für Beschriftungen, feine Rahmen, Punktmatrix-Chart, Pixel-Mosaik als Kursverlauf.
@@ -109,6 +110,27 @@ zieht, bei Gewitter blitzt es. Rechts daneben stehen Hoch/Tief von heute, die ge
 und die Regenwahrscheinlichkeit, unten die nächsten 5 Tage mit Hoch/Tief und Regenwahrscheinlichkeit.
 Der Punkt neben dem Ort ist pink, solange die Daten aktuell sind (grau: älter als eine Stunde).
 
+## Bitcoin-News
+
+Die neuesten Bitcoin-Schlagzeilen, vier je Seite; die Seiten wechseln alle 9 Sekunden, ein Tippen in die
+Mitte der Karte blättert sofort weiter. Die Quelle wird auf der Browser-Seite unter „News“ gewählt:
+
+- **Crypto Vision** ([cryptocurrency.cv](https://cryptocurrency.cv), auch „Free Crypto News API“; Standard):
+  kostenlos und ohne Schlüssel, sammelt Bitcoin-Meldungen aus vielen Quellen (englisch). Forums-Threads
+  von Stacker News werden ausgelassen.
+- **Blocktrainer** (deutsch) und **Bitcoin Magazine** (englisch) über ihre RSS-Feeds.
+
+CryptoCompare und die CoinDesk-API verlangen inzwischen einen Schlüssel und sind deshalb nicht dabei.
+Die Schlagzeilen werden alle 10 Minuten neu geladen, nur wenn die Karte eingeschaltet ist.
+
+**Kurs seit Meldung:** Rechts neben jeder Schlagzeile steht, wie sich der Bitcoin-Kurs seit ihrer
+Veröffentlichung bewegt hat – in Prozent und als Mini-Kurve aus Punkten, hellgrün gestiegen, pink
+gefallen (Kursverlauf der letzten 7,5 Tage in 15-Minuten-Schritten von der öffentlichen Kraken-API, bis
+zum aktuellen Kurs ergänzt). **Zeit in
+Blöcken:** Statt „vor 40 Minuten“ steht über der Schlagzeile „VOR 4 BLÖCKEN“, gezählt an den letzten
+Blöcken von mempool.space, für ältere Meldungen mit 10 Minuten je Block geschätzt; ist seit der Meldung
+noch kein Block gefunden, steht dort ein pinkes „NEU“.
+
 ## Nachtmodus
 
 Im eingestellten Zeitfenster schaltet das Display nach 30 Sekunden ohne Berührung auf schwache
@@ -156,7 +178,7 @@ startet das Deck. Zahnrad bzw. „Einstellungen“ führen zur Konfiguration.
 
 Im Browser lässt sich außerdem die **Chart-Fläche** wählen: Punkte (Standard), ohne Verlauf (nur die Linie)
 oder Pixel (Säulen aus Pixel-Zellen wie das Mosaik der Preiskarte).
-Unter **Wetter** wird der Ort fürs Wetter eingetragen (siehe oben).
+Unter **Wetter** wird der Ort fürs Wetter eingetragen, unter **News** die Quelle der Schlagzeilen (siehe oben).
 Unter **Karten** stehen dort dieselben Ein/Aus-Schalter wie im Kartenmenü, in der eingestellten
 Reihenfolge; mit ↑ und ↓ lassen sich die Karten auch dort verschieben.
 
@@ -202,7 +224,7 @@ Falls sich das Board nicht flashen lässt („No serial data received“): USB-K
 |-------|---------|
 | `main/board.c` | Pins, ST7796 über i80, FT6336U-Touch über I2C, LVGL-Anbindung |
 | `main/ui.c` | alle Karten im Strike-Stil, Chart und Mosaik als vorgerenderte Bilder, Einstellungen, Menü |
-| `main/data.c` | Abruf von CoinGecko, mempool.space, der AxeOS-API und Open-Meteo (Wetter), Demo-Werte |
+| `main/data.c` | Abruf von CoinGecko, mempool.space, der AxeOS-API, Open-Meteo (Wetter) und der News (JSON und RSS), Demo-Werte |
 | `main/net.c` | WLAN, Uhrzeit (NTP), Setup-Portal |
 | `main/settings.c` | Einstellungen im NVS |
 | `main/fonts/` | mit `lv_font_conv` erzeugte Schriften |

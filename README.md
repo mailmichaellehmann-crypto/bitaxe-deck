@@ -11,7 +11,7 @@ Akzent Pink `#FFD4D4`.
 <img src="firmware/screenshots/karte_07.png" width="240"> <img src="firmware/screenshots/karte_08_lotterie.png" width="240">
 </p>
 
-- 13 Karten, endlos per Wischen oder Tippen an den Rand: Preis, USD/EUR, Chart, Block, **Neuer Block** (Blockkette mit Animation: ein Pixel-Block fällt in die Kette, die Blockhöhe rollt hoch), **Halving** (Vollbild aus Pixel-Sand), Gebühren, Difficulty, Uhr, **Wetter** (aktuell und 5 Tage, Open-Meteo), Bitaxe, **Mining-Kosten** (Verbrauch, Kosten pro Tag/Monat/Jahr, Stromzähler), **Share-Lotterie** (jeder Hash des Bitaxe live); jede einzeln abschaltbar
+- 14 Karten, endlos per Wischen oder Tippen an den Rand: Preis, USD/EUR, Chart, Block, **Neuer Block** (Blockkette mit Animation: ein Pixel-Block fällt in die Kette, die Blockhöhe rollt hoch), **Halving** (Vollbild aus Pixel-Sand), Gebühren, Difficulty, Uhr, **Wetter** (aktuell und 5 Tage, Open-Meteo), Bitaxe, **Mining-Kosten** (Verbrauch, Kosten pro Tag/Monat/Jahr, Stromzähler), **Share-Lotterie** (jeder Hash des Bitaxe live), **News** (Bitcoin-Schlagzeilen mit Kurs seit Meldung und Alter in Blöcken); Reihenfolge frei wählbar, jede einzeln abschaltbar
 - Einstellungen per langem Druck, Kartenmenü (Karten per Halten und Ziehen umsortieren), Preisalarm, Nachtmodus in wählbarer Farbe (Bernstein, Tiefrot, Kerzenlicht, Rosé, Phosphor, Eisblau), automatischer Seitenwechsel
 - Einrichtung über eigenes WLAN mit QR-Code, Einstellungen im Browser
 - **OTA-Updates** direkt aus den GitHub-Releases dieses Repositorys

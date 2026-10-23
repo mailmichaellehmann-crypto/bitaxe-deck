@@ -1,5 +1,6 @@
 #pragma once
-// Datenquellen: CoinGecko (Preis/Chart), mempool.space (Netzwerk), AxeOS-API des Bitaxe und Open-Meteo (Wetter)
+// Datenquellen: CoinGecko (Preis/Chart), mempool.space (Netzwerk), AxeOS-API des Bitaxe, Open-Meteo (Wetter)
+// und Bitcoin-News (Crypto Vision oder RSS-Feeds)
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -9,6 +10,8 @@
 #define HIST_PTS 240 // 1 h bei 15 s Abstand
 #define BLOCKS_N 6
 #define WX_DAYS 6 // Wetter: heute und die nächsten 5 Tage
+#define NEWS_N 12 // Schlagzeilen
+#define PXS_N 760 // Kursreihe für „Kurs seit Meldung“: 7,5 Tage in 15-Minuten-Schritten (Kraken)
 
 typedef enum { RANGE_24H = 0, RANGE_7D, RANGE_30D, RANGE_1Y } chart_range_t;
 typedef enum { MINER_DEMO = 0, MINER_ONLINE, MINER_OFFLINE } miner_mode_t;
@@ -51,6 +54,27 @@ typedef struct {
     int64_t updated; // Unix-Sekunden des letzten erfolgreichen Abrufs
     uint32_t ver;
 } weather_t;
+
+typedef struct {
+    char title[176];  // bereinigt (nur Zeichen der Schrift)
+    char source[28];
+    int64_t ts;       // Unix-Sekunden, 0 = unbekannt
+} news_item_t;
+
+typedef struct {
+    int n;
+    news_item_t item[NEWS_N]; // neueste zuerst
+    char err[48];
+    int64_t updated;
+    uint32_t ver;
+} news_t;
+
+// Kursverlauf in USD mit Zeitstempeln (Unix-Sekunden), älteste zuerst
+typedef struct {
+    int n;
+    uint32_t t[PXS_N];
+    float v[PXS_N];
+} px_series_t;
 
 typedef struct {
     // Markt
@@ -102,6 +126,11 @@ typedef struct {
     uint32_t energy_day;   // Datum von energy_day_wh als JJJJMMTT
 
     weather_t wx;
+
+    // Bitcoin-News und dazu der Kursverlauf (im PSRAM)
+    news_t news;
+    px_series_t *px;
+    uint32_t px_ver;
 } deck_data_t;
 
 void data_start(void);

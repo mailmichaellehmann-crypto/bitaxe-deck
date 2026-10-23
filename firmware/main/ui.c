@@ -1,13 +1,15 @@
 // Satoshi Deck – Oberfläche für 480x320 (LVGL 8.4) im Strike-Stil
 // Karten (nach links/rechts wischen):
 //  0 Preis · 1 USD & EUR · 2 Chart · 3 Block · 4 Neuer Block · 5 Halving · 6 Gebühren · 7 Difficulty · 8 Uhr
-//  9 Wetter · 10 Bitaxe · 11 Kosten · 12 Share-Lotterie
+//  9 Wetter · 10 Bitaxe · 11 Kosten · 12 Share-Lotterie · 13 News (Reihenfolge einstellbar)
 // Gestaltung: tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen, Geist Mono für
 // Beschriftungen, 1-px-Rahmen, Punktmatrix-Chart, Pixel-Mosaik; einzige Akzentfarbe: Pink #FFD4D4.
 
 #include "ui.h"
 
+#include <ctype.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +59,7 @@ LV_FONT_DECLARE(font_m20);
 #define N_TILES DECK_CARDS
 #define CARD_NEWBLOCK 4 // Karte „Neuer Block“
 #define CARD_WEATHER 9  // Karte „Wetter“
+#define CARD_NEWS 13    // Karte „News“
 #define NIGHT_BRIGHT 12 // Beleuchtung im Nachtmodus (%), schwach, aber nicht aus
 #define MX 20 // Seitenrand
 
@@ -430,6 +433,7 @@ static bool s_animating;
 static bool s_booting = true; // Boot-Screen sichtbar: kein automatischer Seitenwechsel
 static struct { bool down, drag, long_pr; lv_point_t p0; int64_t t0; int dx; } SW;
 static void open_cfg(void);
+static void news_tap(int card);
 
 static bool card_on(int i) { return (g_settings.card_mask >> i) & 1; }
 
@@ -575,6 +579,7 @@ static void card_event_cb(lv_event_t *e)
         } else if (!SW.long_pr && !K.scrub && code == LV_EVENT_RELEASED) {
             if (p.x < W / 4) car_go(-1);
             else if (p.x > W * 3 / 4) car_go(1);
+            else news_tap(s_cur); // News: Mitte tippen zeigt die nächsten Schlagzeilen
         }
     }
 }
@@ -1297,6 +1302,209 @@ static void update_weather(deck_data_t *d)
         lv_label_set_text(WX.drain[i], b);
         lv_obj_set_style_text_color(WX.drain[i], w->d_rain[k] >= 50 ? C_TEXT2 : C_TEXT3, 0);
     }
+}
+
+// ---- News: Bitcoin-Schlagzeilen (Crypto Vision oder RSS-Feed), vier je Seite, die Seiten wechseln von selbst
+// oder per Tippen in die Mitte. Zu jeder Meldung steht rechts, wie sich der Kurs seitdem bewegt hat – Prozent und
+// Mini-Kurve aus Punkten, hellgrün gestiegen, pink gefallen – und ihr Alter in Blöcken statt Minuten.
+#define NW_ROWS 4
+#define NW_Y0 42        // erste Zeile
+#define NW_RH 67        // Zeilenhöhe
+#define NW_TW 344       // Breite der Schlagzeile
+#define NW_CX 376       // Mini-Kurven: x
+#define NW_COLS 28      // Spalten der Mini-Kurve (3 px Abstand)
+#define NW_LEVELS 6     // Punkte übereinander
+#define NW_PAGE_MS 9000 // so lange steht eine Seite
+#define NW_PINK0 240    // Palette der Mini-Kurven: 8 Stufen Pink, danach 8 Stufen Grün
+#define NW_GREEN0 248
+static canvas8_t NWC;
+static struct {
+    lv_obj_t *tile, *dot[NEWS_N / NW_ROWS], *meta[NW_ROWS], *title[NW_ROWS], *chg[NW_ROWS], *msg;
+    int page;
+    int64_t t_page; // ms
+} NW;
+
+// Kurs (USD) zum Zeitpunkt ts aus der Kursreihe (7,5 Tage); nach deren letztem Punkt bis zum aktuellen Kurs
+// interpoliert. -1 = zu alt oder keine Daten
+static double px_at(const deck_data_t *d, int64_t ts, int64_t now, double live)
+{
+    const px_series_t *s = d->px;
+    if (!s || s->n < 2 || ts < s->t[0]) return -1;
+    int n = s->n;
+    if (ts >= s->t[n - 1]) {
+        if (now <= s->t[n - 1]) return s->v[n - 1];
+        double f = (double)(ts - s->t[n - 1]) / (now - s->t[n - 1]);
+        return s->v[n - 1] + (live - s->v[n - 1]) * (f > 1 ? 1 : f);
+    }
+    int lo = 0, hi = n - 1; // t[lo] <= ts < t[hi]
+    while (hi - lo > 1) {
+        int m = (lo + hi) / 2;
+        if (s->t[m] <= ts) lo = m;
+        else hi = m;
+    }
+    return s->v[lo] + (s->v[hi] - s->v[lo]) * (double)(ts - s->t[lo]) / (s->t[hi] - s->t[lo]);
+}
+
+// Blöcke seit ts: gezählt an den bekannten Blöcken, davor mit 10 Minuten je Block geschätzt
+static int blocks_since(const deck_data_t *d, int64_t ts)
+{
+    if (!d->blocks_n || !ts) return -1;
+    int n = 0;
+    int64_t oldest = INT64_MAX;
+    for (int i = 0; i < d->blocks_n; i++) {
+        if (d->blocks[i].timestamp > ts) n++;
+        if (d->blocks[i].timestamp < oldest) oldest = d->blocks[i].timestamp;
+    }
+    if (n == d->blocks_n && oldest > ts) n += (int)((oldest - ts) / 600);
+    return n;
+}
+
+// Mini-Kurve von der Meldung bis jetzt: Säulen aus Punkten, oben hell, die letzte am hellsten
+static void nw_spark(int r, const deck_data_t *d, int64_t ts, int64_t now, double live, int dir)
+{
+    double v[NW_COLS], mn = 1e18, mx = -1e18;
+    for (int k = 0; k < NW_COLS; k++) {
+        v[k] = px_at(d, ts + (now - ts) * k / (NW_COLS - 1), now, live);
+        if (v[k] < 0) return;
+        if (v[k] < mn) mn = v[k];
+        if (v[k] > mx) mx = v[k];
+    }
+    int base = dir > 0 ? NW_GREEN0 : NW_PINK0, y0 = r * NW_RH + 45;
+    for (int k = 0; k < NW_COLS; k++) {
+        int lv = mx - mn > 1e-6 ? (int)((v[k] - mn) / (mx - mn) * (NW_LEVELS - 1) + 0.5) : NW_LEVELS / 2;
+        for (int q = 0; q <= lv; q++)
+            fill8(&NWC, k * 3, y0 + (NW_LEVELS - 1 - q) * 3, 2, 2, q < lv ? base + 2 : k == NW_COLS - 1 ? base + 7 : base + 6);
+    }
+}
+
+static void news_render(const deck_data_t *d, bool fade)
+{
+    const news_t *nw = &d->news;
+    int pages = (nw->n + NW_ROWS - 1) / NW_ROWS;
+    if (NW.page >= pages) NW.page = 0;
+    for (int i = 0; i < NEWS_N / NW_ROWS; i++) {
+        if (i < pages && pages > 1) lv_obj_clear_flag(NW.dot[i], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(NW.dot[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_bg_color(NW.dot[i], i == NW.page ? C_PINK : C_LINE2, 0);
+    }
+    memset(NWC.px, 0, NWC.w * NWC.h);
+    lv_label_set_text(NW.msg, nw->n ? "" : nw->err[0] ? nw->err : "Lade Schlagzeilen …");
+    int64_t now = time(NULL);
+    double live = d->price_ok ? d->usd : -1;
+    time_t tt = now;
+    struct tm today, tm;
+    localtime_r(&tt, &today);
+    for (int r = 0; r < NW_ROWS; r++) {
+        int k = NW.page * NW_ROWS + r;
+        lv_obj_t *ls[3] = {NW.meta[r], NW.title[r], NW.chg[r]};
+        if (k >= nw->n) {
+            for (int i = 0; i < 3; i++) lv_label_set_text(ls[i], "");
+            continue;
+        }
+        const news_item_t *it = &nw->item[k];
+        // Alter in Blöcken · Uhrzeit (heute) bzw. Datum · Quelle
+        char age[40] = "", when[16] = "", src[32], b[160];
+        int bl = net_time_valid() ? blocks_since(d, it->ts) : -1;
+        if (bl == 0) strlcpy(age, "#FFD4D4 NEU#", sizeof(age));
+        else if (bl == 1) strlcpy(age, "VOR 1 BLOCK", sizeof(age));
+        else if (bl > 1) {
+            char n[16];
+            fmt_de(n, sizeof(n), bl, 0);
+            snprintf(age, sizeof(age), "VOR %s BLÖCKEN", n);
+        }
+        if (it->ts) {
+            tt = it->ts;
+            localtime_r(&tt, &tm);
+            strftime(when, sizeof(when), tm.tm_yday == today.tm_yday && tm.tm_year == today.tm_year ? "%H:%M" : "%d.%m.", &tm);
+        }
+        int i = 0;
+        for (; it->source[i] && i < (int)sizeof(src) - 1; i++) src[i] = toupper((unsigned char)it->source[i]);
+        src[i] = 0;
+        snprintf(b, sizeof(b), "%s%s%s%s%s", age, age[0] && when[0] ? " · " : "", when, src[0] && (age[0] || when[0]) ? " · " : "", src);
+        lv_label_set_text(NW.meta[r], b);
+        lv_label_set_text(NW.title[r], it->title);
+        // Kurs seit der Meldung
+        double p0 = it->ts && live > 0 ? px_at(d, it->ts, now, live) : -1;
+        if (p0 > 0) {
+            double pct = (live / p0 - 1) * 100;
+            if (fabs(pct) < 0.005) strlcpy(b, "0,00 %", sizeof(b)); // kein „–0,00 %“
+            else fmt_change(b, sizeof(b), pct);
+            lv_label_set_text(NW.chg[r], b);
+            lv_obj_set_style_text_color(NW.chg[r], pct >= 0.005 ? C_UP : pct <= -0.005 ? C_PINK : C_TEXT2, 0);
+            nw_spark(r, d, it->ts, now, live, pct >= 0 ? 1 : -1);
+        } else {
+            lv_label_set_text(NW.chg[r], "–");
+            lv_obj_set_style_text_color(NW.chg[r], C_TEXT3, 0);
+        }
+        if (fade)
+            for (int q = 0; q < 3; q++) lv_obj_fade_in(ls[q], 260, r * 70);
+    }
+    lv_obj_invalidate(NWC.cv);
+}
+
+static void build_news(lv_obj_t *t)
+{
+    NW.tile = t;
+    lv_obj_t *h = cap(t, W, "BITCOIN NEWS", 'l', MX, 30);
+    lv_obj_set_style_text_color(cap(t, W, "KURS SEIT MELDUNG", 'r', W - MX, 30), C_TEXT3, 0);
+    lv_obj_update_layout(h);
+    for (int i = 0; i < NEWS_N / NW_ROWS; i++) { // Seiten als Pixel
+        NW.dot[i] = rect(t, MX + lv_obj_get_width(h) + 12 + i * 9, 22, 5, 5, C_LINE2);
+        lv_obj_add_flag(NW.dot[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    canvas8_create(&NWC, t, NW_CX, NW_Y0, W - MX - NW_CX, NW_ROWS * NW_RH);
+    for (int i = 0; i < 8; i++) {
+        uint8_t a = 40 + i * 215 / 7;
+        lv_canvas_set_palette(NWC.cv, NW_PINK0 + i, lv_color_mix(C_PINK, C_BG, a));
+        lv_canvas_set_palette(NWC.cv, NW_GREEN0 + i, lv_color_mix(C_UP, C_BG, a));
+    }
+    for (int r = 0; r < NW_ROWS; r++) {
+        int top = NW_Y0 + r * NW_RH;
+        NW.meta[r] = cap(t, W, "", 'l', MX, top + 15);
+        lv_obj_set_style_text_color(NW.meta[r], C_TEXT3, 0);
+        lv_label_set_recolor(NW.meta[r], true);
+        lv_label_set_long_mode(NW.meta[r], LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(NW.meta[r], W - 2 * MX);
+        NW.title[r] = txt(t, W, &font_g20, C_TEXT, "", 'l', MX, top + 39);
+        lv_obj_set_style_text_line_space(NW.title[r], -3, 0);
+        lv_label_set_long_mode(NW.title[r], LV_LABEL_LONG_DOT);
+        lv_obj_set_size(NW.title[r], NW_TW, 2 * font_g20.line_height - 3);
+        NW.chg[r] = txt(t, W, &font_g20, C_TEXT3, "", 'r', W - MX, top + 39);
+    }
+    NW.msg = txt(t, W, &font_m14, C_TEXT2, "Lade Schlagzeilen …", 'c', W / 2, 170);
+}
+
+static void news_tap(int card)
+{
+    if (card != CARD_NEWS) return;
+    data_lock();
+    deck_data_t *d = data_get();
+    if (d->news.n > NW_ROWS) {
+        NW.page++;
+        NW.t_page = esp_timer_get_time() / 1000;
+        news_render(d, true);
+    }
+    data_unlock();
+}
+
+static uint32_t v_news, v_news_px;
+static void update_news(deck_data_t *d)
+{
+    static int64_t t_render;
+    int64_t ms = esp_timer_get_time() / 1000;
+    bool vis = s_card[s_cur] == NW.tile || (s_nb >= 0 && s_card[s_nb] == NW.tile);
+    if (!vis) NW.t_page = ms; // beim Hinblättern steht die Seite voll
+    if (vis && d->news.n > NW_ROWS && ms - NW.t_page >= NW_PAGE_MS) {
+        NW.page++;
+        NW.t_page = ms;
+        news_render(d, true);
+        t_render = ms;
+    } else if (d->news.ver != v_news || d->px_ver != v_news_px || (vis && ms - t_render > 30000)) {
+        news_render(d, false); // neue Daten oder alle 30 s: Alter und Kurs nachziehen
+        t_render = ms;
+    }
+    v_news = d->news.ver;
+    v_news_px = d->px_ver;
 }
 
 // ---- 7 Bitaxe
@@ -2867,6 +3075,7 @@ static void ui_timer_cb(lv_timer_t *t)
     update_cost(d);
     clock_trend(d);
     update_weather(d);
+    update_news(d);
     update_halving(d);
     if (ticks % 10 == 0) update_age(d);
     data_unlock();
@@ -3291,6 +3500,7 @@ void ui_init(void)
     build_miner(tiles[10]);
     build_cost(tiles[11]);
     build_lottery(tiles[12]);
+    build_news(tiles[CARD_NEWS]);
     int first = g_settings.card_order[0]; // erste Karte der Reihenfolge
     car_jump(card_on(first) ? first : card_step(first, 1), false);
     build_overlays();
