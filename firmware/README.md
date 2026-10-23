@@ -81,7 +81,7 @@ ihnen sind die Zellen ausgespart.
 ## Uhr: LED-Punktanzeige
 
 Standard-Uhr im Stil einer klassischen LED-Anzeige, passend zur Punktmatrix des Charts: Die Ziffern sind
-Siebensegment-Ziffern aus quadratischen LED-Punkten (7 × 13 Punkte je Ziffer), wie die Punkte überall im Deck. Unbeleuchtete Segmente schimmern
+Siebensegment-Ziffern aus quadratischen LED-Punkten (7 × 13 Punkte je Ziffer, 8 px groß), wie die Punkte überall im Deck; leuchtende Punkte glimmen leicht. Unbeleuchtete Segmente schimmern
 schwach, dahinter liegt ein feines Punktraster wie auf einem LED-Panel. Beim Minutenwechsel blenden die
 Segmente kurz über, darunter füllt sich eine Reihe aus 60 kleinen LEDs – eine pro Sekunde.
 

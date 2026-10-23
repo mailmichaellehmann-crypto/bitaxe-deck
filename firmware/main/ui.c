@@ -1019,21 +1019,23 @@ static void build_flap(lv_obj_t *t)
 }
 
 // ---- Uhr als LED-Punktanzeige: Siebensegment-Ziffern aus LED-Punkten (7 × 13 je Ziffer), passend
-// zur Punktmatrix des Charts – quadratische Punkte wie überall im Deck. Unbeleuchtete Segmente schimmern
-// schwach, dahinter ein feines Punktraster.
+// zur Punktmatrix des Charts – quadratische Punkte wie überall im Deck, leuchtende glimmen leicht.
+// Unbeleuchtete Segmente schimmern schwach, dahinter ein feines Punktraster.
 // Die LEDs leuchten in der Trendfarbe (gestiegen hellgrün, gefallen pink), darunter eine Sekundenreihe.
-#define LD_P 9                            // Abstand der LED-Punkte
+#define LD_P 10                           // Abstand der LED-Punkte
+#define LD_DOT 8                          // Kantenlänge eines LED-Punkts
 #define LD_CW 7                           // Ziffer: 7 × 13 Punkte
 #define LD_CH 13
 #define LD_COLS 37                        // Ziffer, 2 frei, Ziffer, 2 frei, Doppelpunkt, 2 frei, Ziffer, 2 frei, Ziffer
 #define LD_Y 46                           // Lage der Leinwand
-#define LD_H 168
+#define LD_H 182
 #define LD_ROW0 1                         // erste Punktreihe der Ziffern
-#define LD_SEC_Y 150                      // Mitte der Sekundenreihe (in der Leinwand)
+#define LD_SEC_Y 164                      // Mitte der Sekundenreihe (in der Leinwand)
 #define LD_FADE 180                       // Überblenden der Segmente (ms)
 #define LD_GRID 16                        // Helligkeit: Raster, unbeleuchtetes Segment, Glimmen, Sekunden
 #define LD_GHOST 34
 #define LD_PAST 92
+#define LD_GLOW 46                        // Glimmen um leuchtende Punkte
 static canvas8_t LDC;
 static struct {
     lv_obj_t *tile, *date, *trend;
@@ -1104,13 +1106,15 @@ static void ld_draw(int64_t now)
                 if (!bit) continue;
                 float o = (LD.seg_old[k] & bit) ? 1 : 0, n = (LD.seg_new[k] & bit) ? 1 : 0, on = o + (n - o) * f;
                 int cx = LD.x0 + (dcol[k] + x) * LD_P + LD_P / 2, cy = (LD_ROW0 + y) * LD_P + LD_P / 2;
-                ld_dot(cx, cy, LD_P - 3, (uint8_t)(LD_GHOST + (255 - LD_GHOST) * on));
+                if (on > 0.02f) ld_dot(cx, cy, LD_DOT + 4, (uint8_t)(LD_GLOW * on)); // Glimmen
+                ld_dot(cx, cy, LD_DOT, (uint8_t)(LD_GHOST + (255 - LD_GHOST) * on));
             }
     // Doppelpunkt
     bool colon = LD.sec < 0 || LD.sec % 2 == 0;
     for (int i = 0; i < 2; i++) {
         int cx = LD.x0 + 18 * LD_P + LD_P / 2, cy = (LD_ROW0 + (i ? 9 : 3)) * LD_P + LD_P / 2;
-        ld_dot(cx, cy, LD_P - 3, colon ? 255 : 70);
+        if (colon) ld_dot(cx, cy, LD_DOT + 4, LD_GLOW);
+        ld_dot(cx, cy, LD_DOT, colon ? 255 : 70);
     }
     // Sekundenreihe: 60 kleine LEDs
     int sp = 6, sx0 = (c->w - 59 * sp) / 2;
