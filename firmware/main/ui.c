@@ -2424,22 +2424,38 @@ static void block_anim_show(uint32_t old_h, uint32_t new_h, const char *pool, ui
 }
 
 // Preisalarm: einmal pro Überschreiten, erneut erst nach 0,5 % Rückkehr
+// Zeitfenster des Nachtmodus (unabhängig davon, ob das Display gerade gedimmt ist)
+static bool night_window(void)
+{
+    if (!g_settings.night_on || !net_time_valid()) return false;
+    time_t t = time(NULL);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    int f = g_settings.night_from, to = g_settings.night_to, h = tm.tm_hour;
+    return f <= to ? (h >= f && h < to) : (h >= f || h < to);
+}
+
+#define ALARM_MS 15000 // so lange steht der Preisalarm höchstens
+
+// Preisalarm: im Zeitfenster des Nachtmodus still (kein Wecken); steht der Kurs danach noch jenseits der
+// Grenze, kommt der Alarm dann
 static void check_price_alarm(double px)
 {
     static int state = 0;
     if (!g_settings.alarm_on || px <= 0) { state = 0; return; }
+    if (night_window()) return;
     char n[24], b[64];
     if (g_settings.alarm_hi > 0 && px >= g_settings.alarm_hi && state != 1) {
         state = 1;
         fmt_de(n, sizeof(n), g_settings.alarm_hi, 0);
         snprintf(b, sizeof(b), "Kurs über %s %s", n, cur_sym());
-        toast_show("PREISALARM", b, 30000);
+        toast_show("PREISALARM", b, ALARM_MS);
         car_jump(0, true);
     } else if (g_settings.alarm_lo > 0 && px <= g_settings.alarm_lo && state != -1) {
         state = -1;
         fmt_de(n, sizeof(n), g_settings.alarm_lo, 0);
         snprintf(b, sizeof(b), "Kurs unter %s %s", n, cur_sym());
-        toast_show("PREISALARM", b, 30000);
+        toast_show("PREISALARM", b, ALARM_MS);
         car_jump(0, true);
     } else if (state == 1 && px < g_settings.alarm_hi * 0.995) state = 0;
     else if (state == -1 && px > g_settings.alarm_lo * 1.005) state = 0;
@@ -3005,14 +3021,7 @@ static void auto_tick(void)
     }
     static int cur = -1, tint = -1;
     int want = g_settings.brightness;
-    bool night = false;
-    if (g_settings.night_on && net_time_valid() && idle > 30000 && !s_toast_until) {
-        time_t t = time(NULL);
-        struct tm tm;
-        localtime_r(&t, &tm);
-        int f = g_settings.night_from, to = g_settings.night_to, h = tm.tm_hour;
-        night = f <= to ? (h >= f && h < to) : (h >= f || h < to);
-    }
+    bool night = idle > 30000 && !s_toast_until && night_window();
     // Nachtmodus: schwache Beleuchtung, alles in einer sanften Farbe; Berührung weckt
     int want_tint = night && g_settings.night_color < NIGHT_COLORS ? g_settings.night_color : -1;
     if (night) want = NIGHT_BRIGHT;

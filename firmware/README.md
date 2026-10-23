@@ -164,7 +164,9 @@ alle 5 Minuten die Zahl der empfangenen Zeilen und Shares stehen im seriellen Lo
 - QR-Code bzw. IP zur Einstellungsseite im Browser
 - oben rechts **Version · PRÜFEN**: sucht sofort nach Updates (zeigt „SUCHE …“, dann „✓ AKTUELL“ oder **UPDATE x →**, Tippen darauf installiert)
 - **Währung** EUR/USD (Preis, Chart, Gebühren, Sats-Umrechnung)
-- **Preisalarm** ein/aus – Grenzen oben/unten auf der Browser-Seite
+- **Preisalarm** ein/aus – Grenzen oben/unten auf der Browser-Seite; die Meldung springt zur Preiskarte und steht
+  höchstens 15 s (Tippen schließt sie). Im Zeitfenster des Nachtmodus bleibt der Alarm still und weckt das Display
+  nicht; steht der Kurs danach noch jenseits der Grenze, meldet er sich dann
 - **Seitenwechsel**: blättert automatisch weiter, wenn niemand das Display berührt (AUS, 5 s … 5 min)
 - **Nachtmodus**: im Zeitfenster (Standard 22–7 Uhr) nach 30 s ohne Berührung schwache Beleuchtung und alles in einer sanften Farbe (siehe unten); Berührung weckt
 - **Neuer Block**: springt bei einem neuen Block zur Karte „Neuer Block“ mit Animation (siehe oben)
