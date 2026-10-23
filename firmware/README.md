@@ -30,7 +30,7 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 11 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
 | 12 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
 | 13 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
-| 14 | News | Bitcoin-Schlagzeilen (Crypto Vision, Blocktrainer oder Bitcoin Magazine), vier je Seite; zu jeder Meldung ihr Alter in Blöcken und wie sich der Kurs seitdem bewegt hat (Prozent und Mini-Kurve) |
+| 14 | News | die vier neuesten Bitcoin-Schlagzeilen (Crypto Vision, Blocktrainer oder Bitcoin Magazine); zu jeder Meldung ihr Alter in Blöcken und wie sich der Kurs seitdem bewegt hat (Prozent und Mini-Kurve) |
 
 Gestaltung im Stil von Strike (eigener Code): tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen,
 Geist Mono für Beschriftungen, feine Rahmen, Punktmatrix-Chart, Pixel-Mosaik als Kursverlauf.
@@ -112,8 +112,8 @@ Der Punkt neben dem Ort ist pink, solange die Daten aktuell sind (grau: älter a
 
 ## Bitcoin-News
 
-Die neuesten Bitcoin-Schlagzeilen, vier je Seite; die Seiten wechseln alle 9 Sekunden, ein Tippen in die
-Mitte der Karte blättert sofort weiter. Die Quelle wird auf der Browser-Seite unter „News“ gewählt:
+Die vier neuesten Bitcoin-Schlagzeilen auf einen Blick. Die Quelle wird auf der Browser-Seite unter „News“
+gewählt:
 
 - **Crypto Vision** ([cryptocurrency.cv](https://cryptocurrency.cv), auch „Free Crypto News API“; Standard):
   kostenlos und ohne Schlüssel, sammelt Bitcoin-Meldungen aus vielen Quellen (englisch). Forums-Threads

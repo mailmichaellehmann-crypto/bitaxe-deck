@@ -370,6 +370,8 @@ static int fetch_weather(void)
 
 // ------------------------------------------------------------------ Bitcoin-News
 
+#define NEWS_PARSE 12 // so viele lesen, davon die neuesten NEWS_N behalten
+
 // Quellen in der Reihenfolge von NEWS_SOURCE_NAMES; Crypto Vision (cryptocurrency.cv) ohne Schlüssel,
 // die anderen als RSS-Feed
 static const struct { const char *url; bool rss; } NEWS_URL[NEWS_SOURCES] = {
@@ -496,7 +498,7 @@ static const char *xml_tag(const char *p, const char *end, const char *tag, int 
 static int news_rss(const char *x, news_item_t *out, const char *src)
 {
     int n = 0;
-    for (const char *p = x; n < NEWS_N && (p = strstr(p, "<item")) != NULL;) {
+    for (const char *p = x; n < NEWS_PARSE && (p = strstr(p, "<item")) != NULL;) {
         const char *end = strstr(p, "</item>");
         if (!end) break;
         int tl, dl;
@@ -520,7 +522,7 @@ static int news_cv(const cJSON *j, news_item_t *out)
     const cJSON *a;
     cJSON_ArrayForEach(a, cJSON_GetObjectItem(j, "articles"))
     {
-        if (n >= NEWS_N) break;
+        if (n >= NEWS_PARSE) break;
         const char *t = cJSON_GetStringValue(cJSON_GetObjectItem(a, "title"));
         const char *src = cJSON_GetStringValue(cJSON_GetObjectItem(a, "source"));
         if (!t || (src && !strcmp(src, "Stacker News"))) continue; // dort vor allem Forums-Threads
@@ -536,7 +538,7 @@ static int news_cv(const cJSON *j, news_item_t *out)
 static int fetch_news(void)
 {
     int src = g_settings.news_src < NEWS_SOURCES ? g_settings.news_src : 0;
-    news_item_t *it = heap_caps_calloc(NEWS_N, sizeof(news_item_t), MALLOC_CAP_SPIRAM);
+    news_item_t *it = heap_caps_calloc(NEWS_PARSE, sizeof(news_item_t), MALLOC_CAP_SPIRAM);
     if (!it) return 60000;
     char err[48] = "";
     int n = 0;
@@ -555,6 +557,7 @@ static int fetch_news(void)
             it[k] = it[k - 1];
             it[k - 1] = tmp;
         }
+    if (n > NEWS_N) n = NEWS_N;
     data_lock();
     if (n > 0) {
         memcpy(s_d.news.item, it, sizeof(news_item_t) * n);

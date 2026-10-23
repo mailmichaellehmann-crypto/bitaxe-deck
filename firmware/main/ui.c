@@ -433,7 +433,6 @@ static bool s_animating;
 static bool s_booting = true; // Boot-Screen sichtbar: kein automatischer Seitenwechsel
 static struct { bool down, drag, long_pr; lv_point_t p0; int64_t t0; int dx; } SW;
 static void open_cfg(void);
-static void news_tap(int card);
 
 static bool card_on(int i) { return (g_settings.card_mask >> i) & 1; }
 
@@ -579,7 +578,6 @@ static void card_event_cb(lv_event_t *e)
         } else if (!SW.long_pr && !K.scrub && code == LV_EVENT_RELEASED) {
             if (p.x < W / 4) car_go(-1);
             else if (p.x > W * 3 / 4) car_go(1);
-            else news_tap(s_cur); // News: Mitte tippen zeigt die nächsten Schlagzeilen
         }
     }
 }
@@ -1304,24 +1302,21 @@ static void update_weather(deck_data_t *d)
     }
 }
 
-// ---- News: Bitcoin-Schlagzeilen (Crypto Vision oder RSS-Feed), vier je Seite, die Seiten wechseln von selbst
-// oder per Tippen in die Mitte. Zu jeder Meldung steht rechts, wie sich der Kurs seitdem bewegt hat – Prozent und
-// Mini-Kurve aus Punkten, hellgrün gestiegen, pink gefallen – und ihr Alter in Blöcken statt Minuten.
-#define NW_ROWS 4
+// ---- News: die vier neuesten Bitcoin-Schlagzeilen (Crypto Vision oder RSS-Feed). Zu jeder Meldung steht rechts,
+// wie sich der Kurs seitdem bewegt hat – Prozent und Mini-Kurve aus Punkten, hellgrün gestiegen, pink gefallen –
+// und darüber ihr Alter in Blöcken statt Minuten.
+#define NW_ROWS NEWS_N
 #define NW_Y0 42        // erste Zeile
 #define NW_RH 67        // Zeilenhöhe
 #define NW_TW 344       // Breite der Schlagzeile
 #define NW_CX 376       // Mini-Kurven: x
 #define NW_COLS 28      // Spalten der Mini-Kurve (3 px Abstand)
 #define NW_LEVELS 6     // Punkte übereinander
-#define NW_PAGE_MS 9000 // so lange steht eine Seite
 #define NW_PINK0 240    // Palette der Mini-Kurven: 8 Stufen Pink, danach 8 Stufen Grün
 #define NW_GREEN0 248
 static canvas8_t NWC;
 static struct {
-    lv_obj_t *tile, *dot[NEWS_N / NW_ROWS], *meta[NW_ROWS], *title[NW_ROWS], *chg[NW_ROWS], *msg;
-    int page;
-    int64_t t_page; // ms
+    lv_obj_t *tile, *meta[NW_ROWS], *title[NW_ROWS], *chg[NW_ROWS], *msg;
 } NW;
 
 // Kurs (USD) zum Zeitpunkt ts aus der Kursreihe (7,5 Tage); nach deren letztem Punkt bis zum aktuellen Kurs
@@ -1377,16 +1372,9 @@ static void nw_spark(int r, const deck_data_t *d, int64_t ts, int64_t now, doubl
     }
 }
 
-static void news_render(const deck_data_t *d, bool fade)
+static void news_render(const deck_data_t *d)
 {
     const news_t *nw = &d->news;
-    int pages = (nw->n + NW_ROWS - 1) / NW_ROWS;
-    if (NW.page >= pages) NW.page = 0;
-    for (int i = 0; i < NEWS_N / NW_ROWS; i++) {
-        if (i < pages && pages > 1) lv_obj_clear_flag(NW.dot[i], LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_add_flag(NW.dot[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_bg_color(NW.dot[i], i == NW.page ? C_PINK : C_LINE2, 0);
-    }
     memset(NWC.px, 0, NWC.w * NWC.h);
     lv_label_set_text(NW.msg, nw->n ? "" : nw->err[0] ? nw->err : "Lade Schlagzeilen …");
     int64_t now = time(NULL);
@@ -1395,13 +1383,13 @@ static void news_render(const deck_data_t *d, bool fade)
     struct tm today, tm;
     localtime_r(&tt, &today);
     for (int r = 0; r < NW_ROWS; r++) {
-        int k = NW.page * NW_ROWS + r;
-        lv_obj_t *ls[3] = {NW.meta[r], NW.title[r], NW.chg[r]};
-        if (k >= nw->n) {
-            for (int i = 0; i < 3; i++) lv_label_set_text(ls[i], "");
+        if (r >= nw->n) {
+            lv_label_set_text(NW.meta[r], "");
+            lv_label_set_text(NW.title[r], "");
+            lv_label_set_text(NW.chg[r], "");
             continue;
         }
-        const news_item_t *it = &nw->item[k];
+        const news_item_t *it = &nw->item[r];
         // Alter in Blöcken · Uhrzeit (heute) bzw. Datum · Quelle
         char age[40] = "", when[16] = "", src[32], b[160];
         int bl = net_time_valid() ? blocks_since(d, it->ts) : -1;
@@ -1436,8 +1424,6 @@ static void news_render(const deck_data_t *d, bool fade)
             lv_label_set_text(NW.chg[r], "–");
             lv_obj_set_style_text_color(NW.chg[r], C_TEXT3, 0);
         }
-        if (fade)
-            for (int q = 0; q < 3; q++) lv_obj_fade_in(ls[q], 260, r * 70);
     }
     lv_obj_invalidate(NWC.cv);
 }
@@ -1445,13 +1431,8 @@ static void news_render(const deck_data_t *d, bool fade)
 static void build_news(lv_obj_t *t)
 {
     NW.tile = t;
-    lv_obj_t *h = cap(t, W, "BITCOIN NEWS", 'l', MX, 30);
+    cap(t, W, "BITCOIN NEWS", 'l', MX, 30);
     lv_obj_set_style_text_color(cap(t, W, "KURS SEIT MELDUNG", 'r', W - MX, 30), C_TEXT3, 0);
-    lv_obj_update_layout(h);
-    for (int i = 0; i < NEWS_N / NW_ROWS; i++) { // Seiten als Pixel
-        NW.dot[i] = rect(t, MX + lv_obj_get_width(h) + 12 + i * 9, 22, 5, 5, C_LINE2);
-        lv_obj_add_flag(NW.dot[i], LV_OBJ_FLAG_HIDDEN);
-    }
     canvas8_create(&NWC, t, NW_CX, NW_Y0, W - MX - NW_CX, NW_ROWS * NW_RH);
     for (int i = 0; i < 8; i++) {
         uint8_t a = 40 + i * 215 / 7;
@@ -1474,33 +1455,14 @@ static void build_news(lv_obj_t *t)
     NW.msg = txt(t, W, &font_m14, C_TEXT2, "Lade Schlagzeilen …", 'c', W / 2, 170);
 }
 
-static void news_tap(int card)
-{
-    if (card != CARD_NEWS) return;
-    data_lock();
-    deck_data_t *d = data_get();
-    if (d->news.n > NW_ROWS) {
-        NW.page++;
-        NW.t_page = esp_timer_get_time() / 1000;
-        news_render(d, true);
-    }
-    data_unlock();
-}
-
 static uint32_t v_news, v_news_px;
 static void update_news(deck_data_t *d)
 {
     static int64_t t_render;
     int64_t ms = esp_timer_get_time() / 1000;
     bool vis = s_card[s_cur] == NW.tile || (s_nb >= 0 && s_card[s_nb] == NW.tile);
-    if (!vis) NW.t_page = ms; // beim Hinblättern steht die Seite voll
-    if (vis && d->news.n > NW_ROWS && ms - NW.t_page >= NW_PAGE_MS) {
-        NW.page++;
-        NW.t_page = ms;
-        news_render(d, true);
-        t_render = ms;
-    } else if (d->news.ver != v_news || d->px_ver != v_news_px || (vis && ms - t_render > 30000)) {
-        news_render(d, false); // neue Daten oder alle 30 s: Alter und Kurs nachziehen
+    if (d->news.ver != v_news || d->px_ver != v_news_px || (vis && ms - t_render > 30000)) {
+        news_render(d); // neue Daten oder alle 30 s: Alter und Kurs nachziehen
         t_render = ms;
     }
     v_news = d->news.ver;

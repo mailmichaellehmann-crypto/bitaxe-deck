@@ -10,7 +10,7 @@
 #define HIST_PTS 240 // 1 h bei 15 s Abstand
 #define BLOCKS_N 6
 #define WX_DAYS 6 // Wetter: heute und die nächsten 5 Tage
-#define NEWS_N 12 // Schlagzeilen
+#define NEWS_N 4 // Schlagzeilen: die neuesten 4
 #define PXS_N 760 // Kursreihe für „Kurs seit Meldung“: 7,5 Tage in 15-Minuten-Schritten (Kraken)
 
 typedef enum { RANGE_24H = 0, RANGE_7D, RANGE_30D, RANGE_1Y } chart_range_t;
