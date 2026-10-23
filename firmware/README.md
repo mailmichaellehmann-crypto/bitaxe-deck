@@ -67,7 +67,9 @@ oben Uhrzeit und Alter („NEUER BLOCK“ in den ersten 10 Minuten, danach „LE
 
 Kommt ein Block, fällt ein pinker Pixel-Block auf den freien Platz, die Verbindung leuchtet auf,
 die Blockhöhe rollt wie ein Zählwerk auf den neuen Wert, danach rückt die Kette einen Platz weiter.
-Ist in den Einstellungen „Neuer Block“ eingeschaltet, springt das Display dafür zu dieser Karte.
+Ist in den Einstellungen „Neuer Block“ eingeschaltet, springt das Display dafür 15 Sekunden zu dieser Karte
+und kehrt dann zur vorherigen zurück (berührt man es in der Zeit, bleibt es, wo man ist). Im Zeitfenster
+des Nachtmodus springt es nicht und weckt das Display nicht; die Karte zeigt den Block trotzdem.
 
 ## Halving
 
@@ -165,11 +167,11 @@ alle 5 Minuten die Zahl der empfangenen Zeilen und Shares stehen im seriellen Lo
 - oben rechts **Version · PRÜFEN**: sucht sofort nach Updates (zeigt „SUCHE …“, dann „✓ AKTUELL“ oder **UPDATE x →**, Tippen darauf installiert)
 - **Währung** EUR/USD (Preis, Chart, Gebühren, Sats-Umrechnung)
 - **Preisalarm** ein/aus – Grenzen oben/unten auf der Browser-Seite; die Meldung springt zur Preiskarte und steht
-  höchstens 15 s (Tippen schließt sie). Im Zeitfenster des Nachtmodus bleibt der Alarm still und weckt das Display
+  höchstens 15 s (Tippen schließt sie), danach geht es zur vorherigen Karte zurück. Im Zeitfenster des Nachtmodus bleibt der Alarm still und weckt das Display
   nicht; steht der Kurs danach noch jenseits der Grenze, meldet er sich dann
 - **Seitenwechsel**: blättert automatisch weiter, wenn niemand das Display berührt (AUS, 5 s … 5 min)
 - **Nachtmodus**: im Zeitfenster (Standard 22–7 Uhr) nach 30 s ohne Berührung schwache Beleuchtung und alles in einer sanften Farbe (siehe unten); Berührung weckt
-- **Neuer Block**: springt bei einem neuen Block zur Karte „Neuer Block“ mit Animation (siehe oben)
+- **Neuer Block**: springt bei einem neuen Block für 15 s zur Karte „Neuer Block“ mit Animation, nachts nicht (siehe oben)
 - **Chart**: Zeitraum 24h / 7T / 30T / 1J
 - unten: Kartenmenü (Raster-Symbol), Helligkeit, Schließen (✕)
 

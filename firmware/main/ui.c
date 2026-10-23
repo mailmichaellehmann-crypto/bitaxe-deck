@@ -537,6 +537,31 @@ static void car_jump(int idx, bool anim)
 
 static int car_current(void) { return s_cur; }
 
+// Hinweise (Preisalarm, neuer Block) springen zu ihrer Karte, wecken das Display und kehren nach NOTE_MS zur
+// vorherigen Karte zurück – außer, jemand hat das Display in der Zeit berührt
+#define NOTE_MS 15000
+static int s_note_ret = -1;    // Karte vor dem Hinweis
+static int64_t s_note_t0;      // ms, 0 = kein Rücksprung offen
+
+static void note_jump(int card)
+{
+    if (!s_note_t0) s_note_ret = s_cur; // bei mehreren Hinweisen hintereinander zur ursprünglichen Karte
+    car_jump(card, true);
+    s_note_t0 = esp_timer_get_time() / 1000;
+    lv_disp_trig_activity(NULL); // weckt aus dem Nachtmodus
+}
+
+static void note_tick(bool overlay)
+{
+    if (!s_note_t0) return;
+    int64_t since = esp_timer_get_time() / 1000 - s_note_t0;
+    if (lv_disp_get_inactive_time(NULL) + 500 < since) s_note_t0 = 0; // berührt: bleibt, wo man ist
+    else if (since >= NOTE_MS) {
+        s_note_t0 = 0;
+        if (!overlay && !SW.down && s_note_ret >= 0 && s_note_ret != s_cur && card_on(s_note_ret)) car_jump(s_note_ret, true);
+    }
+}
+
 static void card_event_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
@@ -2037,6 +2062,7 @@ static void update_chart(deck_data_t *d)
 
 static double subsidy_at(uint32_t h) { return 50.0 / pow(2, h / 210000); }
 
+static bool night_window(void);
 static void update_network(deck_data_t *d)
 {
     if (!d->net_ok || d->net_ver == v_net) return;
@@ -2048,11 +2074,9 @@ static void update_network(deck_data_t *d)
         if (card_h && d->height > card_h) {
             block_anim_show(card_h, d->height, bi->pool, bi->tx_count, bi->reward_btc, bi->timestamp);
             hg_drop();
-            // „Neuer Block“ eingeschaltet: zur Karte springen und das Display wecken
-            if (g_settings.block_note && card_on(CARD_NEWBLOCK) && !s_booting && !SW.down && !K.scrub) {
-                car_jump(CARD_NEWBLOCK, true);
-                lv_disp_trig_activity(NULL);
-            }
+            // „Neuer Block“ eingeschaltet: für 15 s zur Karte springen und das Display wecken – nicht im Nachtmodus
+            if (g_settings.block_note && card_on(CARD_NEWBLOCK) && !s_booting && !SW.down && !K.scrub && !night_window())
+                note_jump(CARD_NEWBLOCK);
         } else block_card_set(d->height, bi->pool, bi->tx_count, bi->reward_btc, bi->timestamp);
         card_h = d->height;
     }
@@ -2435,7 +2459,7 @@ static bool night_window(void)
     return f <= to ? (h >= f && h < to) : (h >= f || h < to);
 }
 
-#define ALARM_MS 15000 // so lange steht der Preisalarm höchstens
+#define ALARM_MS NOTE_MS // so lange steht der Preisalarm höchstens
 
 // Preisalarm: im Zeitfenster des Nachtmodus still (kein Wecken); steht der Kurs danach noch jenseits der
 // Grenze, kommt der Alarm dann
@@ -2450,13 +2474,13 @@ static void check_price_alarm(double px)
         fmt_de(n, sizeof(n), g_settings.alarm_hi, 0);
         snprintf(b, sizeof(b), "Kurs über %s %s", n, cur_sym());
         toast_show("PREISALARM", b, ALARM_MS);
-        car_jump(0, true);
+        note_jump(0);
     } else if (g_settings.alarm_lo > 0 && px <= g_settings.alarm_lo && state != -1) {
         state = -1;
         fmt_de(n, sizeof(n), g_settings.alarm_lo, 0);
         snprintf(b, sizeof(b), "Kurs unter %s %s", n, cur_sym());
         toast_show("PREISALARM", b, ALARM_MS);
-        car_jump(0, true);
+        note_jump(0);
     } else if (state == 1 && px < g_settings.alarm_hi * 0.995) state = 0;
     else if (state == -1 && px > g_settings.alarm_lo * 1.005) state = 0;
 }
@@ -3052,6 +3076,7 @@ static void ui_timer_cb(lv_timer_t *t)
     data_unlock();
     if (ticks % 2 == 0) update_clock();
     toast_tick();
+    note_tick(!lv_obj_has_flag(s_cfg, LV_OBJ_FLAG_HIDDEN) || !lv_obj_has_flag(s_menu, LV_OBJ_FLAG_HIDDEN));
     auto_tick();
     ota_tick();
     // Ohne WLAN: Konfiguration mit Einrichtungs-QR-Code öffnen
