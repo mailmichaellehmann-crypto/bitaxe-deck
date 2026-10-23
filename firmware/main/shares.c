@@ -24,6 +24,15 @@ static esp_websocket_client_handle_t s_ws;
 static char s_line[384];
 static int s_line_len;
 static int s_logged;
+// Wächter: AxeOS schickt bei laufendem ASIC mehrmals pro Sekunde Log-Zeilen. Kommt lange nichts,
+// ist die Verbindung still abgerissen (z. B. von AxeOS geschlossen) – dann neu aufbauen.
+#define WS_STALE_MS 30000
+// erst wenn so lange keine echte Share kam, wird simuliert – länger als der Wächter braucht,
+// damit ein kurzer Abriss die Statistik nicht zurücksetzt
+#define LIVE_HOLD_MS 60000
+static volatile int64_t s_rx_ms;      // letzte Daten aus dem Log-Stream
+static volatile uint32_t s_rx_lines;  // Zeilen seit dem letzten Bericht
+static volatile uint32_t s_rx_shares;
 
 void shares_lock(void) { xSemaphoreTake(s_mtx, portMAX_DELAY); }
 void shares_unlock(void) { xSemaphoreGive(s_mtx); }
@@ -80,6 +89,7 @@ static void parse_line(char *ln)
     if (!p || !strstr(p, " of ")) return;
     double d = strtod(p + 6, NULL);
     if (d <= 0) return;
+    s_rx_shares++;
     if (s_logged < 3) { // die ersten Zeilen zur Kontrolle ins Log
         ESP_LOGI(TAG, "Share aus Log-Stream: %.120s", ln);
         s_logged++;
@@ -92,19 +102,24 @@ static void ws_event(void *arg, esp_event_base_t base, int32_t id, void *event_d
     esp_websocket_event_data_t *e = event_data;
     if (id == WEBSOCKET_EVENT_CONNECTED) {
         ESP_LOGI(TAG, "Log-Stream des Bitaxe verbunden");
+        s_rx_ms = esp_timer_get_time() / 1000;
         shares_lock();
         s_st.connected = true;
         shares_unlock();
     } else if (id == WEBSOCKET_EVENT_DISCONNECTED || id == WEBSOCKET_EVENT_CLOSED || id == WEBSOCKET_EVENT_ERROR) {
+        static const char *what[] = {[WEBSOCKET_EVENT_DISCONNECTED] = "getrennt", [WEBSOCKET_EVENT_CLOSED] = "geschlossen",
+                                     [WEBSOCKET_EVENT_ERROR] = "Fehler"};
+        ESP_LOGW(TAG, "Log-Stream %s", what[id]);
         shares_lock();
         s_st.connected = false;
         shares_unlock();
     } else if (id == WEBSOCKET_EVENT_DATA && (e->op_code == 0x01 || e->op_code == 0x00) && e->data_len > 0) {
+        s_rx_ms = esp_timer_get_time() / 1000;
         for (int i = 0; i < e->data_len; i++) {
             char c = e->data_ptr[i];
             if (c == '\n' || c == '\r') {
                 s_line[s_line_len] = 0;
-                if (s_line_len) parse_line(s_line);
+                if (s_line_len) { s_rx_lines++; parse_line(s_line); }
                 s_line_len = 0;
             } else if (s_line_len < (int)sizeof(s_line) - 1) {
                 s_line[s_line_len++] = c;
@@ -127,13 +142,36 @@ static void ws_start(const char *host)
         .uri = uri,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms = 8000,
+        .enable_close_reconnect = true, // auch nach einem sauberen Schließen durch AxeOS neu verbinden
+        .ping_interval_sec = 10,
+        .pingpong_timeout_sec = 30,     // tote Verbindung nach 30 s ohne Antwort erkennen
         .buffer_size = 1024,
         .task_stack = 4096,
     };
     s_ws = esp_websocket_client_init(&cfg);
     esp_websocket_register_events(s_ws, WEBSOCKET_EVENT_ANY, ws_event, NULL);
     esp_websocket_client_start(s_ws);
+    s_rx_ms = esp_timer_get_time() / 1000; // ab jetzt zählt die Wartezeit
     ESP_LOGI(TAG, "Verbinde mit %s", uri);
+}
+
+// Wächter und Bericht: Stream still -> Verbindung verwerfen, die Schleife baut sie neu auf
+static void ws_watch(void)
+{
+    static int64_t last_report = 0;
+    int64_t now = esp_timer_get_time() / 1000;
+    if (now - last_report >= 5 * 60000) {
+        if (last_report) ESP_LOGI(TAG, "Log-Stream: %u Zeilen, %u Shares in 5 min", (unsigned)s_rx_lines, (unsigned)s_rx_shares);
+        s_rx_lines = s_rx_shares = 0;
+        last_report = now;
+    }
+    if (!s_ws || now - s_rx_ms < WS_STALE_MS) return;
+    ESP_LOGW(TAG, "Log-Stream seit %d s ohne Daten – baue die Verbindung neu auf", (int)((now - s_rx_ms) / 1000));
+    esp_websocket_client_destroy(s_ws);
+    s_ws = NULL;
+    shares_lock();
+    s_st.connected = false;
+    shares_unlock();
 }
 
 static double rand01(void) { return (esp_random() + 1.0) / 4294967297.0; } // (0, 1]
@@ -143,11 +181,12 @@ static void shares_task(void *arg)
 {
     const double sim_min = 256; // typische Mindest-Difficulty der ASIC-Ergebnisse
     for (;;) {
+        ws_watch();
         if (!s_ws && g_settings.bitaxe_host[0][0] && net_state() == NET_CONNECTED) ws_start(g_settings.bitaxe_host[0]);
 
         shares_lock();
         int64_t now = esp_timer_get_time() / 1000;
-        bool live_recent = s_st.live && now - s_st.last_ms < 20000;
+        bool live_recent = s_st.live && now - s_st.last_ms < LIVE_HOLD_MS;
         shares_unlock();
         if (live_recent) {
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -164,7 +203,7 @@ static void shares_task(void *arg)
         if (wait_ms < 60) wait_ms = 60;
         vTaskDelay(pdMS_TO_TICKS((uint32_t)wait_ms));
         shares_lock();
-        bool live_now = s_st.live && esp_timer_get_time() / 1000 - s_st.last_ms < 20000;
+        bool live_now = s_st.live && esp_timer_get_time() / 1000 - s_st.last_ms < LIVE_HOLD_MS;
         shares_unlock();
         if (!live_now) record(sim_min / rand01(), false);
     }

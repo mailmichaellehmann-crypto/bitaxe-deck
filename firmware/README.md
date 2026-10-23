@@ -107,7 +107,11 @@ Das Display liest den Log-Stream des Bitaxe (`ws://<IP>/api/ws`) und wertet jede
 `asic_result: … diff 726.3 of 8192.` aus. Jeder Hash, den der ASIC meldet, fällt als pinker Punkt
 in seine Säule. Je weiter rechts, desto seltener – die pinke Linie ganz rechts ist die
 Netzwerk-Difficulty, also ein Block. Ohne erreichbaren Bitaxe wird die Verteilung simuliert
-(Anzeige „SIMULIERT“ statt „LIVE“).
+(Anzeige „SIMULIERT“ statt „LIVE“) – erst, wenn 60 Sekunden lang keine echte Share kam.
+
+Bricht der Log-Stream still ab (AxeOS schließt die Verbindung oder sie hängt), merkt das ein Wächter:
+Kommen 30 Sekunden lang keine Daten, baut das Deck die Verbindung neu auf. Verbindungsabbrüche und
+alle 5 Minuten die Zahl der empfangenen Zeilen und Shares stehen im seriellen Log.
 
 ## Einstellungen am Gerät
 
