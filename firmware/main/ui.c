@@ -882,27 +882,29 @@ static void fc_render(uint8_t *img, char ch)
         }
 }
 
-// Fuge: Licht in der Farbe des 24h-Trends scheint durch den Spalt und färbt die Kanten daneben
-// (Palette der Plättchen: 240 … 255 = Trendfarbe in 16 Stufen)
-static void fc_seam(uint8_t *dst)
-{
-    uint8_t *gap = dst + (FC_HALF - 1) * FC_W;
-    if (!s_trend) { memset(gap, 0, FC_W * 2); return; }
-    memset(gap, PX_PINK, FC_W * 2);
-    static const int glow[2] = {6, 2}; // Stufe direkt neben dem Spalt, eine Zeile weiter
-    for (int i = 0; i < 2; i++) {
-        uint8_t *up = dst + (FC_HALF - 2 - i) * FC_W, *dn = dst + (FC_HALF + 1 + i) * FC_W;
-        for (int x = 0; x < FC_W; x++) {
-            if (up[x] && up[x] < 0x60) up[x] = PX_PINK0 + glow[i];
-            if (dn[x] && dn[x] < 0x60) dn[x] = PX_PINK0 + glow[i];
-        }
-    }
-}
+// Fuge: weiße Linie quer über das Plättchen
+static void fc_seam(uint8_t *dst) { memset(dst + (FC_HALF - 1) * FC_W, 0xEC, FC_W * 2); }
 
+// Palette der Plättchen: Index = Helligkeit wie bisher, aber der Grund der Plättchen leicht in der
+// Trendfarbe (gestiegen hellgrün, gefallen pink); dunkler wird er zu Schwarz, heller zum Weiß der Ziffern
 static void fc_palette(void)
 {
+    // dunkle, etwas kräftigere Töne derselben Farbe – ein abgedunkeltes Pastell würde grau-braun
+    uint32_t tc = s_trend > 0 ? 0x2E563C : 0x5C3A44; // Grund der oberen Hälfte: Grün bzw. Rosé
+    const float bgv = 0x1D, white = 0xEC;
+    float br = (tc >> 16) & 0xFF, bgc = (tc >> 8) & 0xFF, bb = tc & 0xFF;
     for (int k = 0; k < 4; k++)
-        for (int i = 0; i < 16; i++) lv_canvas_set_palette(FC.cv[k].cv, PX_PINK0 + i, lv_color_mix(trend_col(), C_BG, (uint8_t)(32 + i * 223 / 15)));
+        for (int v = 0; v < PX_PINK0; v++) {
+            lv_color_t c;
+            if (!s_trend) c = lv_color_make(v, v, v);
+            else if (v <= bgv) c = lv_color_make((uint8_t)(br * v / bgv), (uint8_t)(bgc * v / bgv), (uint8_t)(bb * v / bgv));
+            else {
+                float f = (v - bgv) / (white - bgv);
+                if (f > 1) f = 1;
+                c = lv_color_make((uint8_t)(br + (white - br) * f), (uint8_t)(bgc + (white - bgc) * f), (uint8_t)(bb + (white - bb) * f));
+            }
+            lv_canvas_set_palette(FC.cv[k].cv, v, c);
+        }
 }
 
 // Plättchen k zum Zeitpunkt now zusammensetzen

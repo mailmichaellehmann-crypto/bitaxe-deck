@@ -24,7 +24,7 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 6 | Halving | Vollbild aus Pixel-Sand: unten die schon geschürften Blöcke der Epoche, darüber die restlichen; Blöcke bis zum Halving groß, Zielblock, geschätztes Datum, Belohnung vorher/nachher |
 | 7 | Blockzeit & Gebühren | Blockhöhe, Sats pro USD, Gebühren niedrig/mittel/hoch in sat/vB und $ |
 | 8 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
-| 9 | Uhr | Klappzahlen (Standard) wie eine Fallblattanzeige oder klassisch; Datum; die 24h-Änderung des Kurses färbt die Uhr hellgrün (gestiegen) oder pink (gefallen) |
+| 9 | Uhr | Klappzahlen (Standard) wie eine Fallblattanzeige oder klassisch; Datum; die 24h-Änderung des Kurses tönt die Plättchen hellgrün (gestiegen) oder pink (gefallen) |
 | 10 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
 | 11 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
 | 12 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
@@ -85,10 +85,11 @@ so groß wie bei der klassischen Uhr. Ändert sich eine Ziffer, klappt die obere
 Ziffer zur Fuge hin weg, danach klappt die untere Hälfte mit der neuen Ziffer herab – mit Schatten wie
 bei einer echten Anzeige. Mehrere Ziffern klappen von rechts nach links kurz nacheinander.
 
-**24h-Trend:** Durch die Fuge scheint Licht in der Farbe der Kursänderung der letzten 24 Stunden –
-hellgrün (`#9BE3B0`), wenn der Bitcoin-Kurs gestiegen ist, pink (`#FFD4D4`), wenn er gefallen ist. Der
-Doppelpunkt blinkt in derselben Farbe, unter dem Datum steht die Änderung („BTC · 24H +2,34 %“). Die
-klassische Uhr (Auswahl „Uhr“ auf der Browser-Seite) zeigt die Änderung ebenfalls farbig unter dem Datum.
+**24h-Trend:** Die Plättchen sind leicht in der Farbe der Kursänderung der letzten 24 Stunden getönt –
+hellgrün (`#9BE3B0`), wenn der Bitcoin-Kurs gestiegen ist, pink (`#FFD4D4`), wenn er gefallen ist; die
+Fuge bleibt eine weiße Linie. Der Doppelpunkt blinkt in derselben Farbe, unter dem Datum steht die
+Änderung („BTC · 24H +2,34 %“). Die klassische Uhr (Auswahl „Uhr“ auf der Browser-Seite) zeigt die
+Änderung ebenfalls farbig unter dem Datum.
 
 ## Nachtmodus
 
