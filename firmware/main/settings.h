@@ -24,7 +24,7 @@ typedef struct {
     bool night_on;       // Nachtmodus
     uint8_t night_from;  // Stunde, ab der gedimmt wird
     uint8_t night_to;    // Stunde, bis zu der gedimmt wird
-    uint8_t clock_style; // Uhr: 0 = klassisch, 1 = Pixel-Uhr, 2 = Klappzahlen
+    uint8_t clock_style; // Uhr: 0 = klassisch, 2 = Klappzahlen (1 war die frühere Pixel-Uhr)
     uint8_t night_color; // Farbe im Nachtmodus: Index in NIGHT_COLOR_NAMES (NIGHT_COLORS = Originalfarben)
     bool block_note;     // Hinweis bei neuem Block
     uint8_t chart_range; // 0 = 24h, 1 = 7T, 2 = 30T, 3 = 1J

@@ -327,7 +327,7 @@ static struct { lv_obj_t *cur, *chg, *range_lbl, *range, *xlab[5], *msg; tween_t
 static struct { lv_obj_t *height, *age, *halving; } D;                                       // Block
 static struct { lv_obj_t *fee[3], *fiat[3], *height, *sats, *sats_t; } E;                    // Gebühren
 static struct { lv_obj_t *chg, *cells[55], *blocks, *pct; } F;                               // Difficulty
-static struct { lv_obj_t *time, *date; } G;                                                  // Uhr
+static struct { lv_obj_t *time, *date, *trend; } G;                                          // Uhr
 static struct { lv_obj_t *title, *status, *dot, *hash, *unit, *legend, *cells[55], *val[3]; } HB; // Bitaxe
 
 // ---- 0 Preis: großer Kurs, darunter der Kursverlauf als Pixel-Mosaik
@@ -809,279 +809,31 @@ static void build_difficulty(lv_obj_t *t)
     txt(t, W, &font_m14, C_TEXT2, "der Epoche", 'r', W - MX, 300);
 }
 
-// ---- 6 Uhr: klassisch oder als Pixel-Uhr
-// Pixel-Uhr: die Ziffern der Schrift Geist werden auf ein Raster aus 8-px-Zellen gerechnet (Abdeckung
-// je Zelle, Ränder in Zwischenstufen – dadurch glatt), leicht gestreckt und so groß wie möglich.
-// Zu jeder Minute fallen erlöschende Zellen heraus und neue von oben auf ihren Platz. Der Doppelpunkt
-// blinkt pink, unten füllt sich eine Sekundenreihe; darunter das Datum.
+// ---- 6 Uhr: als Klappzahlen (Standard) oder klassisch. Beide zeigen, ob der Kurs in 24 h gestiegen
+// (hellgrün) oder gefallen (pink) ist.
 #define DECK_SNAP_CLOCK 2                 // Screenshot-Modus: Uhr-Stil für die Aufnahmen
-#define PC_CELL 8
-#define PC_COLS (W / PC_CELL)             // 60
-#define PC_ROWS (H / PC_CELL)             // 40
-#define PC_MAXW 58                        // größte Breite der Zeitanzeige (Zellen)
-#define PC_MAXH 28                        // größte Höhe (Zellen)
-#define PC_SEC_ROW 37                     // Sekundenreihe
-#define PC_ANIM 1100                      // Dauer des Umrieselns (ms)
-#define PC_FONT (&font_g120)
-#define PC_SCALE 1.0f                     // Größe: 1 = so groß wie die klassische Uhr (Schriftpixel = Bildpixel)
-#define PC_STRETCH 1.0f                   // Streckung in die Höhe (1 = Originalproportionen)
-static canvas8_t PCC;
 static void build_flap(lv_obj_t *t);
-static struct {
-    lv_obj_t *tile, *date;
-    int c0, r0, cols, rows;                      // Lage der Zeitanzeige im Raster
-    float sx, sy, ox, oy;                        // Maßstab und Ursprung (Pixel je Schriftpixel)
-    int slot, colw, track, top;                  // Ziffernbreite, Doppelpunkt, Laufweite, Oberkante (Schriftpixel)
-    uint8_t cur[PC_MAXW * PC_MAXH], old[PC_MAXW * PC_MAXH]; // Helligkeit je Zelle, 0 = aus
-    uint8_t colon[PC_MAXW * PC_MAXH];                       // Abdeckung des Doppelpunkts
-    int shown;                                   // angezeigte Minute des Tages, -1 = keine Uhrzeit, -2 = neu
-    int64_t anim_t0;                             // Start des Umrieselns (ms), 0 = keins
-    int sec;
-    bool colon_on, on;                           // Doppelpunkt an, Pixel-Stil aktiv
-} PC;
-
-// Abdeckung 0 … 1 eines Zeichens an der Stelle (fx, fy) in Schriftpixeln relativ zu seinem Platz
-static float pc_glyph_cov(const lv_font_glyph_dsc_t *g, const uint8_t *bmp, float fx, float fy, int slot_w)
-{
-    if (!bmp) return 0;
-    int asc = PC_FONT->line_height - PC_FONT->base_line;
-    int gx = (int)(fx - (slot_w - g->adv_w) / 2.0f - g->ofs_x);
-    int gy = (int)(fy + PC.top - (asc - g->box_h - g->ofs_y)); // Oberkante der Zeichenbox in Zeilenkoordinaten
-    if (gx < 0 || gy < 0 || gx >= g->box_w || gy >= g->box_h) return 0;
-    int i = gy * g->box_w + gx;                   // 4 Bit je Pixel, erstes Pixel im oberen Halbbyte
-    return ((bmp[i >> 1] >> ((i & 1) ? 0 : 4)) & 0x0F) / 15.0f;
-}
-
-// Abdeckung einer Zelle für den Text hh:mm (ch = Zeichen je Platz, Mittelwert aus 4 × 4 Abtastpunkten)
-static void pc_raster(const uint32_t ch[5], uint8_t *out, uint8_t *colon)
-{
-    int x0[5], w[5] = {PC.slot, PC.slot, PC.colw, PC.slot, PC.slot};
-    lv_font_glyph_dsc_t g[5];
-    const uint8_t *bmp[5];
-    for (int k = 0, x = 0; k < 5; k++) {
-        x0[k] = x;
-        x += w[k] + PC.track;
-        bmp[k] = lv_font_get_glyph_dsc(PC_FONT, &g[k], ch[k], 0) ? lv_font_get_glyph_bitmap(PC_FONT, ch[k]) : NULL;
-    }
-    for (int j = 0; j < PC.rows; j++)
-        for (int i = 0; i < PC.cols; i++) {
-            float sum = 0, sum_c = 0;
-            for (int sy = 0; sy < 4; sy++)
-                for (int sx = 0; sx < 4; sx++) {
-                    float px = (PC.c0 + i) * PC_CELL + (sx + 0.5f) * PC_CELL / 4, py = (PC.r0 + j) * PC_CELL + (sy + 0.5f) * PC_CELL / 4;
-                    float fx = (px - PC.ox) / PC.sx, fy = (py - PC.oy) / PC.sy;
-                    for (int k = 0; k < 5; k++)
-                        if (fx >= x0[k] && fx < x0[k] + w[k]) {
-                            float c = pc_glyph_cov(&g[k], bmp[k], fx - x0[k], fy, w[k]);
-                            if (k == 2) sum_c += c; else sum += c;
-                        }
-                }
-            float cov = sum / 16, covc = sum_c / 16;
-            int idx = j * PC.cols + i;
-            out[idx] = cov < 0.18f ? 0 : (uint8_t)(cov > 0.85f ? 255 : cov * 300);
-            if (colon) colon[idx] = covc < 0.18f ? 0 : (uint8_t)(covc > 0.85f ? 15 : covc * 17.6f);
-        }
-}
-
-static void pc_layout(uint8_t *out, int hh, int mm)
-{
-    uint32_t ch[5] = {'-', '-', ':', '-', '-'};
-    if (hh >= 0) { ch[0] = '0' + hh / 10; ch[1] = '0' + hh % 10; ch[3] = '0' + mm / 10; ch[4] = '0' + mm % 10; }
-    ch[2] = ' '; // Doppelpunkt wird getrennt gezeichnet
-    pc_raster(ch, out, NULL);
-}
-
-// Lage und Maßstab einmal berechnen: Ziffern so groß wie bei der klassischen Uhr
-static void pc_geom(float stretch)
-{
-    lv_font_glyph_dsc_t g;
-    PC.slot = 0;
-    for (char c = '0'; c <= '9'; c++)
-        if (lv_font_get_glyph_dsc(PC_FONT, &g, c, 0) && g.adv_w > PC.slot) PC.slot = g.adv_w;
-    lv_font_get_glyph_dsc(PC_FONT, &g, ':', 0);
-    PC.colw = g.adv_w;
-    PC.track = -PC.slot / 14;
-    lv_font_get_glyph_dsc(PC_FONT, &g, '0', 0);
-    int asc = PC_FONT->line_height - PC_FONT->base_line;
-    PC.top = asc - g.box_h - g.ofs_y; // Oberkante der Ziffern in Zeilenkoordinaten
-    int fw = 4 * PC.slot + PC.colw + 4 * PC.track, fh = g.box_h;
-    PC.sx = PC_SCALE;
-    PC.sy = PC.sx * stretch;
-    if (fh * PC.sy > (PC_MAXH - 2) * PC_CELL) PC.sy = (PC_MAXH - 2) * PC_CELL / (float)fh;
-    PC.cols = (int)(fw * PC.sx / PC_CELL) + 2;
-    PC.rows = (int)(fh * PC.sy / PC_CELL) + 2;
-    if (PC.cols > PC_MAXW) PC.cols = PC_MAXW;
-    if (PC.rows > PC_MAXH) PC.rows = PC_MAXH;
-    PC.c0 = (PC_COLS - PC.cols) / 2;
-    // Uhrzeit und Datum (mit deutlichem Abstand) zusammen mittig über der Sekundenreihe
-    int dh = (int)(fh * PC.sy), gap = 58;
-    PC.r0 = (PC_SEC_ROW * PC_CELL - (dh + gap)) / 2 / PC_CELL - 1;
-    if (PC.r0 < 1) PC.r0 = 1;
-    PC.ox = PC.c0 * PC_CELL + (PC.cols * PC_CELL - fw * PC.sx) / 2;
-    PC.oy = PC.r0 * PC_CELL + (PC.rows * PC_CELL - fh * PC.sy) / 2;
-    if (PC.date) lv_obj_align(PC.date, LV_ALIGN_TOP_MID, 0, (int)PC.oy + dh + gap - ascent(&font_m16));
-    uint32_t cc[5] = {' ', ' ', ':', ' ', ' '};
-    uint8_t tmp[PC_MAXW * PC_MAXH];
-    pc_raster(cc, tmp, PC.colon);
-}
-
-static bool pc_masked(int q, int r)
-{
-    int x = q * PC_CELL, y = r * PC_CELL;
-    int lx = lv_obj_get_x(PC.date) - 6, ly = lv_obj_get_y(PC.date) - 3;
-    int lw = lv_obj_get_width(PC.date) + 12, lh = lv_obj_get_height(PC.date) + 4;
-    return x + PC_CELL > lx && x < lx + lw && y + PC_CELL > ly && y < ly + lh;
-}
-
-static uint8_t pc_bg(int q, int r)
-{
-    if (pc_masked(q, r)) return 0x04;
-    return (hash2(q + 500, r) % 7) == 0 ? 0x10 : 0x08;
-}
-static uint8_t pc_on(int q, int r, uint8_t cov) { return g8((0xC4 + (int)(hash2(q + 700, r) % 0x24)) * cov / 255); }
-
-// Doppelpunkt und Sekundenreihe
-static void pc_small(int sec, bool colon)
-{
-    canvas8_t *c = &PCC;
-    for (int j = 0; j < PC.rows; j++)
-        for (int i = 0; i < PC.cols; i++) {
-            uint8_t cv = PC.colon[j * PC.cols + i];
-            if (!cv) continue;
-            int lvl = colon ? cv : cv * 5 / 15;
-            fill8(c, (PC.c0 + i) * PC_CELL, (PC.r0 + j) * PC_CELL, PC_CELL - 1, PC_CELL - 1, PX_PINK0 + lvl);
-        }
-    for (int q = 0; q < PC_COLS; q++) {
-        uint8_t cl = sec < 0 ? pc_bg(q, PC_SEC_ROW) : q < sec ? 0x3A : q == sec ? PX_PINK : pc_bg(q, PC_SEC_ROW);
-        fill8(c, q * PC_CELL, PC_SEC_ROW * PC_CELL, PC_CELL - 1, PC_CELL - 1, cl);
-    }
-}
-
-// ganzes Bild; während des Umrieselns mit fallenden Zellen
-static void pc_draw(int64_t ms)
-{
-    canvas8_t *c = &PCC;
-    memset(c->px, 0, c->w * c->h);
-    lv_obj_update_layout(PC.tile);
-    for (int r = 0; r < PC_ROWS; r++)
-        for (int q = 0; q < PC_COLS; q++) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_bg(q, r));
-    int64_t t = PC.anim_t0 ? ms - PC.anim_t0 : PC_ANIM;
-    for (int j = 0; j < PC.rows; j++)
-        for (int i = 0; i < PC.cols; i++) {
-            int k = j * PC.cols + i, q = PC.c0 + i, r = PC.r0 + j;
-            uint8_t o = PC.old[k], n = PC.cur[k];
-            uint32_t hh = hash2(q, r + 900);
-            if (o && n) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r, t < 500 ? o : n));
-            else if (o && !n) { // fällt heraus und verlischt
-                int st = (int)(hh % 300);
-                float p = (t - st) / 600.0f;
-                if (p < 0) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r, o));
-                else if (p < 1) {
-                    int y = r * PC_CELL + (int)(p * p * 140);
-                    fill8(c, q * PC_CELL, y, PC_CELL - 1, PC_CELL - 1, (uint8_t)(pc_on(q, r, o) * (1 - p)));
-                }
-            } else if (!o && n) { // fällt von oben auf seinen Platz, untere Reihen zuerst
-                int st = 250 + (PC.rows - 1 - j) * 12 + (int)(hh % 260);
-                float p = (t - st) / 420.0f;
-                if (p >= 1) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(q, r, n));
-                else if (p > 0) {
-                    int y = -PC_CELL + (int)((r * PC_CELL + PC_CELL) * p * p);
-                    fill8(c, q * PC_CELL, y, PC_CELL - 1, PC_CELL - 1, pc_on(q, r, n));
-                }
-            }
-        }
-    pc_small(PC.sec, PC.colon_on);
-    lv_obj_invalidate(c->cv);
-}
-
-static void pc_tick(lv_timer_t *tm)
-{
-    if (!PC.on) return;
-    int64_t ms = esp_timer_get_time() / 1000;
-    bool vis = s_card[s_cur] == PC.tile || (s_nb >= 0 && s_card[s_nb] == PC.tile);
-    int minute = -1, sec = -1, hh = -1, mm = -1;
-    if (net_time_valid()) {
-        time_t now = time(NULL);
-        struct tm tmv;
-        localtime_r(&now, &tmv);
-        hh = tmv.tm_hour;
-        mm = tmv.tm_min;
-        sec = tmv.tm_sec;
-        minute = hh * 60 + mm;
-    }
-    if (minute != PC.shown || PC.shown == -2) { // neue Minute: umrieseln (nur sichtbar animiert)
-        memcpy(PC.old, PC.cur, sizeof(PC.cur));
-        pc_layout(PC.cur, hh, mm);
-        PC.anim_t0 = vis && PC.shown != -2 ? ms : 0;
-        if (!PC.anim_t0) memcpy(PC.old, PC.cur, sizeof(PC.cur));
-        PC.shown = minute;
-        PC.sec = sec;
-        PC.colon_on = sec < 0 || sec % 2 == 0;
-        pc_draw(ms);
-        return;
-    }
-    if (PC.anim_t0) {
-        if (ms - PC.anim_t0 >= PC_ANIM) {
-            PC.anim_t0 = 0;
-            memcpy(PC.old, PC.cur, sizeof(PC.cur));
-        }
-        PC.sec = sec;
-        PC.colon_on = sec % 2 == 0;
-        if (vis) pc_draw(ms);
-        return;
-    }
-    if (sec != PC.sec) {
-        PC.sec = sec;
-        PC.colon_on = sec < 0 || sec % 2 == 0;
-        pc_small(sec, PC.colon_on);
-        lv_obj_invalidate(PCC.cv);
-    }
-}
+static int s_trend;                       // 24h-Kurs: +1 gestiegen, -1 gefallen, 0 unbekannt
+static lv_color_t trend_col(void) { return s_trend > 0 ? C_UP : s_trend < 0 ? C_PINK : C_TEXT3; }
 
 static void build_clock(lv_obj_t *t)
 {
     G.time = tight(txt(t, W, &font_g120, C_TEXT, "--:--", 'c', W / 2, 180), 4);
     G.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, 226);
     lv_obj_set_style_text_letter_space(G.date, 2, 0);
+    G.trend = txt(t, W, &font_m14, C_TEXT3, "", 'c', W / 2, 262);
+    lv_obj_set_style_text_letter_space(G.trend, 1, 0);
     int style = g_settings.clock_style;
 #ifdef CONFIG_DECK_SNAPSHOT
     style = DECK_SNAP_CLOCK; // Aufnahmen mit festem Uhr-Stil (ändert die gespeicherte Einstellung nicht)
 #endif
-    if (style == 2) {
+    if (style == 2) { // Klappzahlen: die klassischen Beschriftungen bleiben (Zeit auf den Preiskarten), unsichtbar
         lv_obj_add_flag(G.time, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(G.date, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(G.trend, LV_OBJ_FLAG_HIDDEN);
         build_flap(t);
-        return;
     }
-    if (style != 1) return;
-    // Pixel-Uhr: die klassischen Beschriftungen bleiben (für die Zeit auf den Preiskarten), unsichtbar
-    lv_obj_add_flag(G.time, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(G.date, LV_OBJ_FLAG_HIDDEN);
-    PC.on = true;
-    PC.tile = t;
-    canvas8_create(&PCC, t, 0, 0, W, H);
-    PC.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, 276);
-    lv_obj_set_style_text_letter_space(PC.date, 2, 0);
-    pc_geom(PC_STRETCH);
-    PC.shown = -2;
-    PC.sec = -1;
-    lv_timer_create(pc_tick, 40, NULL);
 }
-
-#ifdef CONFIG_DECK_SNAPSHOT
-// Testhilfe (Screenshot-Modus): Umrieseln von hh:mm nach hh:mm+1 starten
-static void pc_test(int hh, int mm)
-{
-    if (!PC.on) return;
-    pc_layout(PC.old, hh, mm);
-    pc_layout(PC.cur, hh, (mm + 1) % 60);
-    PC.anim_t0 = esp_timer_get_time() / 1000;
-    time_t now = time(NULL); // echte Minute merken, damit pc_tick die Testanzeige nicht sofort ersetzt
-    struct tm tmv;
-    localtime_r(&now, &tmv);
-    PC.shown = net_time_valid() ? tmv.tm_hour * 60 + tmv.tm_min : -1;
-}
-#endif
 
 // ---- Uhr als Klappzahlen (Fallblattanzeige): vier dunkle Plättchen mit Fuge in der Mitte, Ziffern so
 // groß wie bei der klassischen Uhr. Ändert sich eine Ziffer, klappt die obere Hälfte mit der alten Ziffer
@@ -1095,7 +847,7 @@ static void pc_test(int hh, int mm)
 #define FC_FLIP 560                       // Dauer eines Klappens (ms)
 #define FC_FONT (&font_g120)
 static struct {
-    lv_obj_t *tile, *date, *dot[2];
+    lv_obj_t *tile, *date, *trend, *dot[2];
     canvas8_t cv[4];
     uint8_t *img_old[4], *img_new[4];     // Plättchen mit alter / neuer Ziffer (Grauwerte)
     char dig[4];                          // angezeigte Ziffern
@@ -1130,6 +882,29 @@ static void fc_render(uint8_t *img, char ch)
         }
 }
 
+// Fuge: Licht in der Farbe des 24h-Trends scheint durch den Spalt und färbt die Kanten daneben
+// (Palette der Plättchen: 240 … 255 = Trendfarbe in 16 Stufen)
+static void fc_seam(uint8_t *dst)
+{
+    uint8_t *gap = dst + (FC_HALF - 1) * FC_W;
+    if (!s_trend) { memset(gap, 0, FC_W * 2); return; }
+    memset(gap, PX_PINK, FC_W * 2);
+    static const int glow[2] = {6, 2}; // Stufe direkt neben dem Spalt, eine Zeile weiter
+    for (int i = 0; i < 2; i++) {
+        uint8_t *up = dst + (FC_HALF - 2 - i) * FC_W, *dn = dst + (FC_HALF + 1 + i) * FC_W;
+        for (int x = 0; x < FC_W; x++) {
+            if (up[x] && up[x] < 0x60) up[x] = PX_PINK0 + glow[i];
+            if (dn[x] && dn[x] < 0x60) dn[x] = PX_PINK0 + glow[i];
+        }
+    }
+}
+
+static void fc_palette(void)
+{
+    for (int k = 0; k < 4; k++)
+        for (int i = 0; i < 16; i++) lv_canvas_set_palette(FC.cv[k].cv, PX_PINK0 + i, lv_color_mix(trend_col(), C_BG, (uint8_t)(32 + i * 223 / 15)));
+}
+
 // Plättchen k zum Zeitpunkt now zusammensetzen
 static void fc_compose(int k, int64_t now)
 {
@@ -1162,7 +937,7 @@ static void fc_compose(int k, int64_t now)
             }
         }
     }
-    memset(dst + (FC_HALF - 1) * FC_W, 0, FC_W * 2); // Fuge
+    fc_seam(dst);
     lv_obj_invalidate(FC.cv[k].cv);
 }
 
@@ -1201,10 +976,10 @@ static void fc_tick(lv_timer_t *tm)
             if (!vis) FC.t0[k] = 0; // nicht zu sehen: gleich fertig
             fc_compose(k, now);
         }
-    if (sec != FC.sec) { // Doppelpunkt blinkt pink
+    if (sec != FC.sec) { // Doppelpunkt blinkt in der Trendfarbe
         FC.sec = sec;
         bool on = sec < 0 || sec % 2 == 0;
-        for (int i = 0; i < 2; i++) lv_obj_set_style_bg_color(FC.dot[i], on ? C_PINK : C_PINK_DIM, 0);
+        for (int i = 0; i < 2; i++) lv_obj_set_style_bg_color(FC.dot[i], on ? trend_col() : lv_color_mix(trend_col(), C_BG, 110), 0);
     }
 }
 
@@ -1229,11 +1004,47 @@ static void build_flap(lv_obj_t *t)
         lv_obj_set_style_radius(FC.dot[i], 2, 0);
         lv_obj_clear_flag(FC.dot[i], LV_OBJ_FLAG_CLICKABLE);
     }
-    FC.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, FC_Y + FC_H + 52);
+    FC.date = txt(t, W, &font_m16, C_TEXT2, "", 'c', W / 2, FC_Y + FC_H + 50);
     lv_obj_set_style_text_letter_space(FC.date, 2, 0);
+    FC.trend = txt(t, W, &font_m14, C_TEXT3, "", 'c', W / 2, FC_Y + FC_H + 78);
+    lv_obj_set_style_text_letter_space(FC.trend, 1, 0);
+    fc_palette();
     FC.shown = -2;
     FC.sec = -1;
     lv_timer_create(fc_tick, 30, NULL);
+}
+
+// 24h-Änderung auf der Uhr zeigen: Fuge, Doppelpunkt und Zeile unter dem Datum in Grün oder Pink
+static void clock_trend_apply(double chg)
+{
+    int tr = chg > 0.004 ? 1 : chg < -0.004 ? -1 : 0;
+    char n[24], b[48];
+    fmt_change(n, sizeof(n), chg);
+    snprintf(b, sizeof(b), "BTC · 24H  %s", n);
+    bool changed = tr != s_trend;
+    s_trend = tr;
+    lv_label_set_text(G.trend, b);
+    lv_obj_set_style_text_color(G.trend, trend_col(), 0);
+    if (!FC.on) return;
+    lv_label_set_text(FC.trend, b);
+    lv_obj_set_style_text_color(FC.trend, trend_col(), 0);
+    if (changed) {
+        fc_palette();
+        int64_t now = esp_timer_get_time() / 1000;
+        for (int k = 0; k < 4; k++) fc_compose(k, now);
+        FC.sec = -2; // Doppelpunkt neu färben
+    }
+}
+
+static void clock_trend(deck_data_t *d)
+{
+    static int32_t last = INT32_MIN;
+    if (!d->price_ok) return;
+    double chg = g_settings.currency ? d->chg24_eur : d->chg24;
+    int32_t key = (int32_t)lround(chg * 100) * 2 + g_settings.currency;
+    if (key == last) return;
+    last = key;
+    clock_trend_apply(chg);
 }
 
 #ifdef CONFIG_DECK_SNAPSHOT
@@ -1964,15 +1775,11 @@ static void update_clock(void)
     snprintf(full, sizeof(full), "%s · %s", days[tm.tm_wday], dt);
     if (strcmp(lv_label_get_text(G.date), full)) {
         lv_label_set_text(G.date, full);
-        if (PC.on || FC.on) { // Pixel-Uhr und Klappzahlen: nur das Datum, ausgeschrieben
+        if (FC.on) { // Klappzahlen: Datum ausgeschrieben
             static const char *mon[12] = {"JANUAR", "FEBRUAR", "MÄRZ", "APRIL", "MAI", "JUNI", "JULI", "AUGUST", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DEZEMBER"};
             char d2[40];
             snprintf(d2, sizeof(d2), "%d. %s %d", tm.tm_mday, mon[tm.tm_mon], tm.tm_year + 1900);
-            if (PC.on) {
-                lv_label_set_text(PC.date, d2);
-                PC.shown = -2; // neu zeichnen (Aussparung hinter dem Text)
-            }
-            if (FC.on) lv_label_set_text(FC.date, d2);
+            lv_label_set_text(FC.date, d2);
         }
     }
 }
@@ -2704,6 +2511,7 @@ static void ui_timer_cb(lv_timer_t *t)
     update_network(d);
     update_miner(d);
     update_cost(d);
+    clock_trend(d);
     update_halving(d);
     if (ticks % 10 == 0) update_age(d);
     data_unlock();
@@ -2740,10 +2548,10 @@ static void bench_cb(lv_timer_t *t)
     static int idx = -1, wait = 0, row = -1, ticks = 0, sid = 0;
     static lv_img_dsc_t *snap;
     static const int ba_at[4] = {700, 1250, 1900, 3500}; // Block-Animation: Aufnahmezeitpunkte (ms)
-    static const int pc_at[2] = {450, 800}; // Pixel-Uhr: Aufnahmen während des Umrieselns (ms)
-    static const float pc_k[4] = {1.0f, 1.15f, 1.3f, 1.45f}; // Pixel-Uhr: Streckungen zum Vergleich
+    static const int fc_at[2] = {450, 800};          // Klappzahlen: Aufnahmen während des Klappens (ms)
+    static const double tr_chg[2] = {2.34, -1.45};   // Uhr mit Trend rauf / runter
     ticks++;
-    if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS + 2 + 4) return;
+    if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS + 2 + 2) return;
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
@@ -2755,16 +2563,14 @@ static void bench_cb(lv_timer_t *t)
     }
     if (row < 0) {
         int k = idx - (N_TILES + 2);
-        if (k >= 4 + NIGHT_COLORS + 2) { // Pixel-Uhr in verschiedenen Streckungen
+        if (k >= 4 + NIGHT_COLORS + 2) { // Uhr mit 24h-Trend rauf bzw. runter
             if (wait++ == 0) {
                 car_jump(8, false);
-                pc_geom(pc_k[k - 4 - NIGHT_COLORS - 2]);
-                PC.anim_t0 = 0;
-                PC.shown = -2;
+                clock_trend_apply(tr_chg[k - 4 - NIGHT_COLORS - 2]);
                 return;
             }
             if (wait < 12) return;
-        } else if (k >= 4 + NIGHT_COLORS) { // Pixel-Uhr: 12:59 → 13:00 umrieseln
+        } else if (k >= 4 + NIGHT_COLORS) { // Klappzahlen: 12:59 → 13:00
             static int64_t t0;
             int64_t now = esp_timer_get_time() / 1000;
             if (wait++ == 0) {
@@ -2772,12 +2578,11 @@ static void bench_cb(lv_timer_t *t)
                 return;
             }
             if (wait == 10) {
-                if (FC.on) fc_test(12, 59);
-                else pc_test(12, 59);
+                fc_test(12, 59);
                 t0 = now;
                 return;
             }
-            if (wait < 10 || now - t0 < pc_at[k - 4 - NIGHT_COLORS]) return;
+            if (wait < 10 || now - t0 < fc_at[k - 4 - NIGHT_COLORS]) return;
         } else if (k >= 4) { // Nachtfarben: Preiskarte, umgerechnet wie beim Übertragen ans Display
             if (wait++ == 0) {
                 car_jump(0, false);
