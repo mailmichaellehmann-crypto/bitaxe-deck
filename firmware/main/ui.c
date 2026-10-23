@@ -822,7 +822,8 @@ static void build_difficulty(lv_obj_t *t)
 #define PC_SEC_ROW 37                     // Sekundenreihe
 #define PC_ANIM 1100                      // Dauer des Umrieselns (ms)
 #define PC_FONT (&font_g120)
-#define PC_STRETCH 1.15f                  // Streckung in die Höhe (1 = Originalproportionen)
+#define PC_SCALE 1.0f                     // Größe: 1 = so groß wie die klassische Uhr (Schriftpixel = Bildpixel)
+#define PC_STRETCH 1.0f                   // Streckung in die Höhe (1 = Originalproportionen)
 static canvas8_t PCC;
 static struct {
     lv_obj_t *tile, *date;
@@ -888,7 +889,7 @@ static void pc_layout(uint8_t *out, int hh, int mm)
     pc_raster(ch, out, NULL);
 }
 
-// Lage und Maßstab einmal berechnen: so breit wie der Bildschirm, leicht in die Höhe gestreckt
+// Lage und Maßstab einmal berechnen: Ziffern so groß wie bei der klassischen Uhr
 static void pc_geom(float stretch)
 {
     lv_font_glyph_dsc_t g;
@@ -902,7 +903,7 @@ static void pc_geom(float stretch)
     int asc = PC_FONT->line_height - PC_FONT->base_line;
     PC.top = asc - g.box_h - g.ofs_y; // Oberkante der Ziffern in Zeilenkoordinaten
     int fw = 4 * PC.slot + PC.colw + 4 * PC.track, fh = g.box_h;
-    PC.sx = (PC_MAXW - 2) * PC_CELL / (float)fw;
+    PC.sx = PC_SCALE;
     PC.sy = PC.sx * stretch;
     if (fh * PC.sy > (PC_MAXH - 2) * PC_CELL) PC.sy = (PC_MAXH - 2) * PC_CELL / (float)fh;
     PC.cols = (int)(fw * PC.sx / PC_CELL) + 2;
@@ -910,13 +911,13 @@ static void pc_geom(float stretch)
     if (PC.cols > PC_MAXW) PC.cols = PC_MAXW;
     if (PC.rows > PC_MAXH) PC.rows = PC_MAXH;
     PC.c0 = (PC_COLS - PC.cols) / 2;
-    // Datum knapp über der Sekundenreihe, die Uhrzeit mit deutlichem Abstand darüber
-    int date_base = PC_SEC_ROW * PC_CELL - 28;
-    PC.r0 = (date_base - 54) / PC_CELL - PC.rows;
+    // Uhrzeit und Datum (mit deutlichem Abstand) zusammen mittig über der Sekundenreihe
+    int dh = (int)(fh * PC.sy), gap = 58;
+    PC.r0 = (PC_SEC_ROW * PC_CELL - (dh + gap)) / 2 / PC_CELL - 1;
     if (PC.r0 < 1) PC.r0 = 1;
-    if (PC.date) lv_obj_align(PC.date, LV_ALIGN_TOP_MID, 0, date_base - ascent(&font_m16));
     PC.ox = PC.c0 * PC_CELL + (PC.cols * PC_CELL - fw * PC.sx) / 2;
     PC.oy = PC.r0 * PC_CELL + (PC.rows * PC_CELL - fh * PC.sy) / 2;
+    if (PC.date) lv_obj_align(PC.date, LV_ALIGN_TOP_MID, 0, (int)PC.oy + dh + gap - ascent(&font_m16));
     uint32_t cc[5] = {' ', ' ', ':', ' ', ' '};
     uint8_t tmp[PC_MAXW * PC_MAXH];
     pc_raster(cc, tmp, PC.colon);
