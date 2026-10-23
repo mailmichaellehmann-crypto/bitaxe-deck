@@ -820,10 +820,7 @@ static void build_difficulty(lv_obj_t *t)
 #define PC_MAXW 58                        // größte Breite der Zeitanzeige (Zellen)
 #define PC_MAXH 28                        // größte Höhe (Zellen)
 #define PC_SEC_ROW 37                     // Sekundenreihe
-#define PC_FADE_IN 200                    // glatte Ziffern zerfallen in Zellen (ms)
-#define PC_FALL 1100                      // Zellen rieseln um
-#define PC_FADE_OUT 260                   // neue Zellen werden wieder zu glatten Ziffern
-#define PC_ANIM (PC_FADE_IN + PC_FALL + PC_FADE_OUT)
+#define PC_ANIM 1100                      // Dauer des Umrieselns (ms)
 #define PC_FONT (&font_g120)
 #define PC_STRETCH 1.15f                  // Streckung in die Höhe (1 = Originalproportionen)
 static canvas8_t PCC;
@@ -833,8 +830,6 @@ static struct {
     float sx, sy, ox, oy;                        // Maßstab und Ursprung (Pixel je Schriftpixel)
     int slot, colw, track, top;                  // Ziffernbreite, Doppelpunkt, Laufweite, Oberkante (Schriftpixel)
     uint8_t cur[PC_MAXW * PC_MAXH], old[PC_MAXW * PC_MAXH]; // Helligkeit je Zelle, 0 = aus
-    uint8_t *sm, *sm_old;                        // glatte Ziffern je Pixel (Grau, Doppelpunkt als Pink-Stufe)
-    int ax, ay, aw, ah;                          // Bereich der Zeitanzeige in Pixeln
     uint8_t colon[PC_MAXW * PC_MAXH];                       // Abdeckung des Doppelpunkts
     int shown;                                   // angezeigte Minute des Tages, -1 = keine Uhrzeit, -2 = neu
     int64_t anim_t0;                             // Start des Umrieselns (ms), 0 = keins
@@ -852,51 +847,6 @@ static float pc_glyph_cov(const lv_font_glyph_dsc_t *g, const uint8_t *bmp, floa
     if (gx < 0 || gy < 0 || gx >= g->box_w || gy >= g->box_h) return 0;
     int i = gy * g->box_w + gx;                   // 4 Bit je Pixel, erstes Pixel im oberen Halbbyte
     return ((bmp[i >> 1] >> ((i & 1) ? 0 : 4)) & 0x0F) / 15.0f;
-}
-
-// Abdeckung 0 … 1 an einer beliebigen Stelle, bilinear zwischen den Schriftpixeln (für glatte Ziffern);
-// nicht inline: GCC 13 (Xtensa) stürzt sonst beim Übersetzen von pc_tick ab
-__attribute__((noinline)) static float pc_sample(const lv_font_glyph_dsc_t *g, const uint8_t *bmp, float fx, float fy, int slot_w)
-{
-    if (!bmp) return 0;
-    int asc = PC_FONT->line_height - PC_FONT->base_line;
-    float gx = fx - (slot_w - g->adv_w) / 2.0f - g->ofs_x - 0.5f;
-    float gy = fy + PC.top - (asc - g->box_h - g->ofs_y) - 0.5f;
-    int x0 = (int)floorf(gx), y0 = (int)floorf(gy);
-    if (x0 < -1 || y0 < -1 || x0 >= g->box_w || y0 >= g->box_h) return 0;
-    float ax = gx - x0, ay = gy - y0, v[4];
-    for (int k = 0; k < 4; k++) {
-        int x = x0 + (k & 1), y = y0 + (k >> 1);
-        if (x < 0 || y < 0 || x >= g->box_w || y >= g->box_h) { v[k] = 0; continue; }
-        int i = y * g->box_w + x;
-        v[k] = (bmp[i >> 1] >> ((i & 1) ? 0 : 4)) & 0x0F;
-    }
-    return ((v[0] * (1 - ax) + v[1] * ax) * (1 - ay) + (v[2] * (1 - ax) + v[3] * ax) * ay) / 15.0f;
-}
-
-// glatte Zeitanzeige hh:mm Pixel für Pixel: Ziffern als Grau, Doppelpunkt als Pink-Stufe, sonst 0
-__attribute__((noinline)) static void pc_smooth(uint8_t *out, int hh, int mm)
-{
-    uint32_t ch[5] = {'-', '-', ':', '-', '-'};
-    if (hh >= 0) { ch[0] = '0' + hh / 10; ch[1] = '0' + hh % 10; ch[3] = '0' + mm / 10; ch[4] = '0' + mm % 10; }
-    int x0[5], w[5] = {PC.slot, PC.slot, PC.colw, PC.slot, PC.slot};
-    lv_font_glyph_dsc_t g[5];
-    const uint8_t *bmp[5];
-    for (int k = 0, x = 0; k < 5; k++) {
-        x0[k] = x;
-        x += w[k] + PC.track;
-        bmp[k] = lv_font_get_glyph_dsc(PC_FONT, &g[k], ch[k], 0) ? lv_font_get_glyph_bitmap(PC_FONT, ch[k]) : NULL;
-    }
-    for (int y = 0; y < PC.ah; y++)
-        for (int x = 0; x < PC.aw; x++) {
-            float fx = (PC.ax + x + 0.5f - PC.ox) / PC.sx, fy = (PC.ay + y + 0.5f - PC.oy) / PC.sy;
-            int k = 0;
-            while (k < 4 && fx >= x0[k] + w[k] + PC.track) k++;
-            float cov = fx >= x0[k] && fx < x0[k] + w[k] ? pc_sample(&g[k], bmp[k], fx - x0[k], fy, w[k]) : 0;
-            uint8_t v = 0;
-            if (cov > 0.03f) v = k == 2 ? (uint8_t)(PX_PINK0 + lroundf(cov * 15)) : g8(lroundf(cov * 0xE6));
-            out[y * PC.aw + x] = v;
-        }
 }
 
 // Abdeckung einer Zelle für den Text hh:mm (ch = Zeichen je Platz, Mittelwert aus 4 × 4 Abtastpunkten)
@@ -970,14 +920,6 @@ static void pc_geom(float stretch)
     uint32_t cc[5] = {' ', ' ', ':', ' ', ' '};
     uint8_t tmp[PC_MAXW * PC_MAXH];
     pc_raster(cc, tmp, PC.colon);
-    PC.ax = PC.c0 * PC_CELL;
-    PC.ay = PC.r0 * PC_CELL;
-    PC.aw = PC.cols * PC_CELL;
-    PC.ah = PC.rows * PC_CELL;
-    heap_caps_free(PC.sm);
-    heap_caps_free(PC.sm_old);
-    PC.sm = heap_caps_calloc(PC.aw * PC.ah, 1, MALLOC_CAP_SPIRAM);
-    PC.sm_old = heap_caps_calloc(PC.aw * PC.ah, 1, MALLOC_CAP_SPIRAM);
 }
 
 static bool pc_masked(int q, int r)
@@ -995,23 +937,16 @@ static uint8_t pc_bg(int q, int r)
 }
 static uint8_t pc_on(int q, int r, uint8_t cov) { return g8((0xC4 + (int)(hash2(q + 700, r) % 0x24)) * cov / 255); }
 
-static uint8_t pc_bgc[PC_MAXW * PC_MAXH]; // Hintergrund je Zelle der Zeitanzeige (für die Überblendung)
-
-// Doppelpunkt (glatt, blinkt) und Sekundenreihe
+// Doppelpunkt und Sekundenreihe
 static void pc_small(int sec, bool colon)
 {
     canvas8_t *c = &PCC;
-    if (PC.sm)
-        for (int y = 0; y < PC.ah; y++) {
-            const uint8_t *src = PC.sm + y * PC.aw;
-            uint8_t *dst = c->px + (PC.ay + y) * c->w + PC.ax;
-            for (int x = 0; x < PC.aw; x++) {
-                if (src[x] < PX_PINK0) continue;
-                int lvl = src[x] - PX_PINK0;
-                if (!colon) lvl = lvl * 6 / 15;
-                bool in = (x % PC_CELL) < PC_CELL - 1 && (y % PC_CELL) < PC_CELL - 1;
-                dst[x] = lvl ? PX_PINK0 + lvl : (in ? pc_bgc[(y / PC_CELL) * PC.cols + x / PC_CELL] : 0);
-            }
+    for (int j = 0; j < PC.rows; j++)
+        for (int i = 0; i < PC.cols; i++) {
+            uint8_t cv = PC.colon[j * PC.cols + i];
+            if (!cv) continue;
+            int lvl = colon ? cv : cv * 5 / 15;
+            fill8(c, (PC.c0 + i) * PC_CELL, (PC.r0 + j) * PC_CELL, PC_CELL - 1, PC_CELL - 1, PX_PINK0 + lvl);
         }
     for (int q = 0; q < PC_COLS; q++) {
         uint8_t cl = sec < 0 ? pc_bg(q, PC_SEC_ROW) : q < sec ? 0x3A : q == sec ? PX_PINK : pc_bg(q, PC_SEC_ROW);
@@ -1019,37 +954,15 @@ static void pc_small(int sec, bool colon)
     }
 }
 
-// glatte Ziffern über die Zellen legen: f = 0 nur Zellen … 255 nur glatte Ziffern (Doppelpunkt extra)
-__attribute__((noinline)) static void pc_blend(const uint8_t *sm, int f)
+// ganzes Bild; während des Umrieselns mit fallenden Zellen
+static void pc_draw(int64_t ms)
 {
     canvas8_t *c = &PCC;
-    for (int y = 0; y < PC.ah; y++) {
-        const uint8_t *src = sm + y * PC.aw;
-        uint8_t *dst = c->px + (PC.ay + y) * c->w + PC.ax;
-        bool iny = (y % PC_CELL) < PC_CELL - 1;
-        for (int x = 0; x < PC.aw; x++) {
-            uint8_t sv = src[x] >= PX_PINK0 ? 0 : src[x];
-            uint8_t bg = iny && (x % PC_CELL) < PC_CELL - 1 ? pc_bgc[(y / PC_CELL) * PC.cols + x / PC_CELL] : 0;
-            int tgt = sv > bg ? sv : bg, cur = dst[x] >= PX_PINK0 ? bg : dst[x];
-            dst[x] = (uint8_t)(cur + (tgt - cur) * f / 255);
-        }
-    }
-}
-
-// alle Zellen einer Anzeige ruhend zeichnen
-static void pc_cells(const uint8_t *cells)
-{
-    for (int j = 0; j < PC.rows; j++)
-        for (int i = 0; i < PC.cols; i++) {
-            uint8_t v = cells[j * PC.cols + i];
-            if (v) fill8(&PCC, (PC.c0 + i) * PC_CELL, (PC.r0 + j) * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_on(PC.c0 + i, PC.r0 + j, v));
-        }
-}
-
-// Zellen rieseln: alte fallen heraus, neue fallen von oben auf ihren Platz (t ab Beginn des Rieselns)
-static void pc_fall(int64_t t)
-{
-    canvas8_t *c = &PCC;
+    memset(c->px, 0, c->w * c->h);
+    lv_obj_update_layout(PC.tile);
+    for (int r = 0; r < PC_ROWS; r++)
+        for (int q = 0; q < PC_COLS; q++) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_bg(q, r));
+    int64_t t = PC.anim_t0 ? ms - PC.anim_t0 : PC_ANIM;
     for (int j = 0; j < PC.rows; j++)
         for (int i = 0; i < PC.cols; i++) {
             int k = j * PC.cols + i, q = PC.c0 + i, r = PC.r0 + j;
@@ -1074,28 +987,6 @@ static void pc_fall(int64_t t)
                 }
             }
         }
-}
-
-// ganzes Bild: in Ruhe glatte Ziffern; beim Wechsel zerfallen sie in Zellen, rieseln um und werden wieder glatt
-__attribute__((noinline)) static void pc_draw(int64_t ms)
-{
-    canvas8_t *c = &PCC;
-    memset(c->px, 0, c->w * c->h);
-    lv_obj_update_layout(PC.tile);
-    for (int r = 0; r < PC_ROWS; r++)
-        for (int q = 0; q < PC_COLS; q++) fill8(c, q * PC_CELL, r * PC_CELL, PC_CELL - 1, PC_CELL - 1, pc_bg(q, r));
-    for (int j = 0; j < PC.rows; j++)
-        for (int i = 0; i < PC.cols; i++) pc_bgc[j * PC.cols + i] = pc_bg(PC.c0 + i, PC.r0 + j);
-    int64_t t = PC.anim_t0 ? ms - PC.anim_t0 : PC_ANIM;
-    if (t >= PC_ANIM) pc_blend(PC.sm, 255);
-    else if (t < PC_FADE_IN) {
-        pc_cells(PC.old);
-        pc_blend(PC.sm_old, 255 - (int)(t * 255 / PC_FADE_IN));
-    } else if (t < PC_FADE_IN + PC_FALL) pc_fall(t - PC_FADE_IN);
-    else {
-        pc_cells(PC.cur);
-        pc_blend(PC.sm, (int)((t - PC_FADE_IN - PC_FALL) * 255 / PC_FADE_OUT));
-    }
     pc_small(PC.sec, PC.colon_on);
     lv_obj_invalidate(c->cv);
 }
@@ -1118,10 +1009,6 @@ static void pc_tick(lv_timer_t *tm)
     if (minute != PC.shown || PC.shown == -2) { // neue Minute: umrieseln (nur sichtbar animiert)
         memcpy(PC.old, PC.cur, sizeof(PC.cur));
         pc_layout(PC.cur, hh, mm);
-        uint8_t *sw = PC.sm_old; // bisherige glatte Anzeige wird die alte
-        PC.sm_old = PC.sm;
-        PC.sm = sw;
-        pc_smooth(PC.sm, hh, mm);
         PC.anim_t0 = vis && PC.shown != -2 ? ms : 0;
         if (!PC.anim_t0) memcpy(PC.old, PC.cur, sizeof(PC.cur));
         PC.shown = minute;
@@ -1179,8 +1066,6 @@ static void pc_test(int hh, int mm)
     if (!PC.on) return;
     pc_layout(PC.old, hh, mm);
     pc_layout(PC.cur, hh, (mm + 1) % 60);
-    pc_smooth(PC.sm_old, hh, mm);
-    pc_smooth(PC.sm, hh, (mm + 1) % 60);
     PC.anim_t0 = esp_timer_get_time() / 1000;
     time_t now = time(NULL); // echte Minute merken, damit pc_tick die Testanzeige nicht sofort ersetzt
     struct tm tmv;
@@ -2667,11 +2552,10 @@ static void bench_cb(lv_timer_t *t)
     static int idx = -1, wait = 0, row = -1, ticks = 0, sid = 0;
     static lv_img_dsc_t *snap;
     static const int ba_at[4] = {700, 1250, 1900, 3500}; // Block-Animation: Aufnahmezeitpunkte (ms)
-#define PC_SHOTS 4
-    static const int pc_at[PC_SHOTS] = {110, 650, 1150, 1440}; // Pixel-Uhr: zerfallen, rieseln, rieseln, glätten (ms)
+    static const int pc_at[2] = {450, 800}; // Pixel-Uhr: Aufnahmen während des Umrieselns (ms)
     static const float pc_k[4] = {1.0f, 1.15f, 1.3f, 1.45f}; // Pixel-Uhr: Streckungen zum Vergleich
     ticks++;
-    if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS + PC_SHOTS + 4) return;
+    if (idx >= N_TILES + 2 + 4 + NIGHT_COLORS + 2 + 4) return;
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
@@ -2683,10 +2567,10 @@ static void bench_cb(lv_timer_t *t)
     }
     if (row < 0) {
         int k = idx - (N_TILES + 2);
-        if (k >= 4 + NIGHT_COLORS + PC_SHOTS) { // Pixel-Uhr in verschiedenen Streckungen
+        if (k >= 4 + NIGHT_COLORS + 2) { // Pixel-Uhr in verschiedenen Streckungen
             if (wait++ == 0) {
                 car_jump(8, false);
-                pc_geom(pc_k[k - 4 - NIGHT_COLORS - PC_SHOTS]);
+                pc_geom(pc_k[k - 4 - NIGHT_COLORS - 2]);
                 PC.anim_t0 = 0;
                 PC.shown = -2;
                 return;
@@ -2727,7 +2611,7 @@ static void bench_cb(lv_timer_t *t)
             }
             if (now - t0 < ba_at[k]) return;
         } else if (++wait < 20) return;
-        sid = k >= 4 + NIGHT_COLORS + PC_SHOTS ? 70 + k - 4 - NIGHT_COLORS - PC_SHOTS
+        sid = k >= 4 + NIGHT_COLORS + 2 ? 70 + k - 4 - NIGHT_COLORS - 2
             : k >= 4 + NIGHT_COLORS     ? 60 + k - 4 - NIGHT_COLORS
             : k >= 4                    ? 50 + k - 4
             : k >= 0                    ? 30 + k
