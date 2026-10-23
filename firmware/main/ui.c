@@ -1018,8 +1018,9 @@ static void build_flap(lv_obj_t *t)
     lv_timer_create(fc_tick, 30, NULL);
 }
 
-// ---- Uhr als LED-Punktanzeige: Siebensegment-Ziffern aus runden LED-Punkten (7 × 13 je Ziffer), passend
-// zur Punktmatrix des Charts. Unbeleuchtete Segmente schimmern schwach, dahinter ein feines Punktraster.
+// ---- Uhr als LED-Punktanzeige: Siebensegment-Ziffern aus LED-Punkten (7 × 13 je Ziffer), passend
+// zur Punktmatrix des Charts – quadratische Punkte wie überall im Deck. Unbeleuchtete Segmente schimmern
+// schwach, dahinter ein feines Punktraster.
 // Die LEDs leuchten in der Trendfarbe (gestiegen hellgrün, gefallen pink), darunter eine Sekundenreihe.
 #define LD_P 9                            // Abstand der LED-Punkte
 #define LD_CW 7                           // Ziffer: 7 × 13 Punkte
@@ -1032,7 +1033,6 @@ static void build_flap(lv_obj_t *t)
 #define LD_FADE 180                       // Überblenden der Segmente (ms)
 #define LD_GRID 16                        // Helligkeit: Raster, unbeleuchtetes Segment, Glimmen, Sekunden
 #define LD_GHOST 34
-#define LD_GLOW 46
 #define LD_PAST 92
 static canvas8_t LDC;
 static struct {
@@ -1063,21 +1063,18 @@ static uint8_t ld_seg_at(int x, int y)
     return 0;
 }
 
-// runder Punkt mit weichem Rand; Werte sind Helligkeiten (Palette = Trendfarbe), es gewinnt der hellere
-static void ld_dot(int cx, int cy, float r, uint8_t v)
+// quadratischer Punkt (wie die Zellen und Punkte überall im Deck); Werte sind Helligkeiten
+// (Palette = Trendfarbe), es gewinnt der hellere
+static void ld_dot(int cx, int cy, int size, uint8_t v)
 {
     canvas8_t *c = &LDC;
-    int R = (int)r + 2;
-    for (int y = cy - R; y <= cy + R; y++) {
+    int x0 = cx - size / 2, y0 = cy - size / 2;
+    for (int y = y0; y < y0 + size; y++) {
         if (y < 0 || y >= c->h) continue;
-        for (int x = cx - R; x <= cx + R; x++) {
+        for (int x = x0; x < x0 + size; x++) {
             if (x < 0 || x >= c->w) continue;
-            float d = sqrtf((float)((x - cx) * (x - cx) + (y - cy) * (y - cy)));
-            float a = r + 0.5f - d;
-            if (a <= 0) continue;
-            uint8_t q = (uint8_t)(v * (a > 1 ? 1 : a));
             uint8_t *p = &c->px[y * c->w + x];
-            if (q > *p) *p = q;
+            if (v > *p) *p = v;
         }
     }
 }
@@ -1098,7 +1095,7 @@ static void ld_draw(int64_t now)
     // feines Raster wie ein LED-Panel (an den Ziffern ausgerichtet)
     for (int gy = 0; gy < rows; gy++)
         for (int gx = -(LD.x0 / LD_P); gx * LD_P + LD.x0 < c->w; gx++)
-            ld_dot(LD.x0 + gx * LD_P + LD_P / 2, gy * LD_P + LD_P / 2, 1.2f, LD_GRID);
+            ld_dot(LD.x0 + gx * LD_P + LD_P / 2, gy * LD_P + LD_P / 2, 2, LD_GRID);
     static const int dcol[4] = {0, 9, 21, 30};
     for (int k = 0; k < 4; k++)
         for (int y = 0; y < LD_CH; y++)
@@ -1107,21 +1104,19 @@ static void ld_draw(int64_t now)
                 if (!bit) continue;
                 float o = (LD.seg_old[k] & bit) ? 1 : 0, n = (LD.seg_new[k] & bit) ? 1 : 0, on = o + (n - o) * f;
                 int cx = LD.x0 + (dcol[k] + x) * LD_P + LD_P / 2, cy = (LD_ROW0 + y) * LD_P + LD_P / 2;
-                if (on > 0.02f) ld_dot(cx, cy, 5.2f, (uint8_t)(LD_GLOW * on)); // Glimmen
-                ld_dot(cx, cy, 3.3f, (uint8_t)(LD_GHOST + (255 - LD_GHOST) * on));
+                ld_dot(cx, cy, LD_P - 3, (uint8_t)(LD_GHOST + (255 - LD_GHOST) * on));
             }
     // Doppelpunkt
     bool colon = LD.sec < 0 || LD.sec % 2 == 0;
     for (int i = 0; i < 2; i++) {
         int cx = LD.x0 + 18 * LD_P + LD_P / 2, cy = (LD_ROW0 + (i ? 9 : 3)) * LD_P + LD_P / 2;
-        if (colon) ld_dot(cx, cy, 5.2f, LD_GLOW);
-        ld_dot(cx, cy, 3.3f, colon ? 255 : 70);
+        ld_dot(cx, cy, LD_P - 3, colon ? 255 : 70);
     }
     // Sekundenreihe: 60 kleine LEDs
     int sp = 6, sx0 = (c->w - 59 * sp) / 2;
     for (int q = 0; q < 60; q++) {
         uint8_t v = LD.sec < 0 || q > LD.sec ? LD_GHOST : q == LD.sec ? 255 : LD_PAST;
-        ld_dot(sx0 + q * sp, LD_SEC_Y, 1.7f, v);
+        ld_dot(sx0 + q * sp, LD_SEC_Y, 3, v);
     }
     lv_obj_invalidate(c->cv);
 }

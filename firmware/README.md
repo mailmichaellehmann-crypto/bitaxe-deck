@@ -24,7 +24,7 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 | 6 | Halving | Vollbild aus Pixel-Sand: unten die schon geschürften Blöcke der Epoche, darüber die restlichen; Blöcke bis zum Halving groß, Zielblock, geschätztes Datum, Belohnung vorher/nachher |
 | 7 | Blockzeit & Gebühren | Blockhöhe, Sats pro USD, Gebühren niedrig/mittel/hoch in sat/vB und $ |
 | 8 | Difficulty-Anpassung | erwartete Änderung, Fortschritt, Blöcke bis Retarget |
-| 9 | Uhr | LED-Punktanzeige (Standard): Siebensegment-Ziffern aus runden LED-Punkten in der Trendfarbe (hellgrün gestiegen, pink gefallen), Sekundenreihe, Datum; wahlweise Klappzahlen oder klassisch |
+| 9 | Uhr | LED-Punktanzeige (Standard): Siebensegment-Ziffern aus quadratischen LED-Punkten in der Trendfarbe (hellgrün gestiegen, pink gefallen), Sekundenreihe, Datum; wahlweise Klappzahlen oder klassisch |
 | 10 | Bitaxe | Vollbild: Name, IP/Status, Hashrate, Session/Best vs. Netzwerk, ASIC-/VR-Temperatur, Lüfter |
 | 11 | Mining-Kosten | aktueller Verbrauch des Bitaxe in W, Kosten pro Tag/Monat/Jahr samt kWh, Tageskosten in sats („Lotterielos“), gezählter Verbrauch heute und gesamt |
 | 12 | Share-Lotterie | jeder vom Bitaxe gefundene Hash live als Punkt im Histogramm (log. Skala) – links häufig, rechts selten, ganz rechts der Block; letzter/bester Hash, Hashes pro Minute, Abstand zum Block |
@@ -81,7 +81,7 @@ ihnen sind die Zellen ausgespart.
 ## Uhr: LED-Punktanzeige
 
 Standard-Uhr im Stil einer klassischen LED-Anzeige, passend zur Punktmatrix des Charts: Die Ziffern sind
-Siebensegment-Ziffern aus runden LED-Punkten (7 × 13 Punkte je Ziffer). Unbeleuchtete Segmente schimmern
+Siebensegment-Ziffern aus quadratischen LED-Punkten (7 × 13 Punkte je Ziffer), wie die Punkte überall im Deck. Unbeleuchtete Segmente schimmern
 schwach, dahinter liegt ein feines Punktraster wie auf einem LED-Panel. Beim Minutenwechsel blenden die
 Segmente kurz über, darunter füllt sich eine Reihe aus 60 kleinen LEDs – eine pro Sekunde.
 
