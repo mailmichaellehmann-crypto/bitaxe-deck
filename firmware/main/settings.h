@@ -36,6 +36,8 @@ typedef struct {
     uint16_t card_mask;  // eingeschaltete Karten (Bit 0 = Preis … Bit 13 = News, siehe DECK_CARD_NAMES)
     uint8_t card_order[DECK_CARDS]; // Reihenfolge beim Blättern: Kartennummern (Index in DECK_CARD_NAMES)
     char wx_place[48];   // Ort fürs Wetter: Name, Postleitzahl oder „Breite, Länge“; leer = nicht eingestellt
+    bool wx_ll;          // Koordinaten aus der Ortssuche im Browser (dann ohne eigene Suche)
+    float wx_lat, wx_lon;
     uint8_t news_src;    // News-Quelle: Index in NEWS_SOURCE_NAMES
 } deck_settings_t;
 

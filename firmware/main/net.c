@@ -5,12 +5,14 @@
 
 #include "net.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -31,7 +33,10 @@ static esp_netif_t *s_sta, *s_ap;
 static char s_ip[16] = "";
 static bool s_portal_on = false;
 static esp_timer_handle_t s_fallback_timer;
-static char s_scan_html[2048] = "";
+#define SCAN_MAX 20
+static struct { char ssid[33]; int8_t rssi; } s_scan[SCAN_MAX]; // gefundene Netze, stärkstes zuerst
+static int s_scan_n;
+static void scan_networks(void);
 
 // ------------------------------------------------------------------ Portal (HTTP)
 
@@ -39,7 +44,8 @@ static char s_scan_html[2048] = "";
 // Pixel-Mosaik oben, Akzent Pink #FFD4D4. Keine externen Schriften (läuft auch im Setup-WLAN).
 static const char *PAGE_HEAD =
     "<!doctype html><html lang=de><head><meta charset=utf-8>"
-    "<meta name=viewport content='width=device-width,initial-scale=1'><title>Satoshi Deck</title><style>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'><title>Satoshi Deck</title>"
+    "<link rel=icon href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 25 25'%3E%3Crect width='25' height='25' rx='5' fill='%23000'/%3E%3Crect x='3' y='3' width='5' height='5' rx='1' fill='%235e5e5e'/%3E%3Crect x='10' y='3' width='5' height='5' rx='1' fill='%235e5e5e'/%3E%3Crect x='17' y='3' width='5' height='5' rx='1' fill='%239a9a9a'/%3E%3Crect x='3' y='10' width='5' height='5' rx='1' fill='%235e5e5e'/%3E%3Crect x='10' y='10' width='5' height='5' rx='1' fill='%235e5e5e'/%3E%3Crect x='17' y='10' width='5' height='5' rx='1' fill='%239a9a9a'/%3E%3Crect x='3' y='17' width='5' height='5' rx='1' fill='%235e5e5e'/%3E%3Crect x='10' y='17' width='5' height='5' rx='1' fill='%235e5e5e'/%3E%3Crect x='17' y='17' width='5' height='5' rx='1' fill='%23ffd4d4'/%3E%3C/svg%3E\"><style>"
     ":root{--fg:#ececec;--mut:#9a9a9a;--dim:#5e5e5e;--line:#262626;--pink:#ffd4d4;"
     "--sans:ui-sans-serif,-apple-system,'Helvetica Neue',Inter,Arial,sans-serif;"
     "--mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace}"
@@ -73,14 +79,29 @@ static const char *PAGE_HEAD =
     "color:#000;background:var(--fg);cursor:pointer}"
     "button:active{background:var(--pink)}"
     ".acc{color:var(--pink)}small{color:var(--dim);font-family:var(--mono);font-size:12px}"
+    ".btn{display:inline-block;margin-top:24px;padding:13px 26px;border-radius:999px;font:500 14px var(--mono);"
+    "color:#000;background:var(--fg);text-decoration:none}.btn.wait{background:#000;color:var(--mut);border:1px solid var(--line)}"
     "</style></head><body><div id=mos></div><main>"
     "<script>(function(){var m=document.getElementById('mos');for(var i=0;i<48*6;i++){var x=i%48,"
     "r=Math.random(),g=Math.round(14+r*r*58*(x/48+.3));var e=document.createElement('i');"
     "e.style.background=(i==48*6-1)?'#ffd4d4':'rgb('+g+','+g+','+g+')';m.appendChild(e)}})()</script>";
 
+// Text sicher in HTML einsetzen (WLAN-Namen können beliebige Zeichen enthalten)
+static void html_esc(char *out, size_t len, const char *s)
+{
+    size_t o = 0;
+    for (; *s && o + 7 < len; s++) {
+        const char *r = *s == '&' ? "&amp;" : *s == '<' ? "&lt;" : *s == '>' ? "&gt;" : *s == '\'' ? "&#39;" : *s == '"' ? "&quot;" : NULL;
+        if (r) o += snprintf(out + o, len - o, "%s", r);
+        else out[o++] = *s;
+    }
+    out[o] = 0;
+}
+
 static esp_err_t root_get(httpd_req_t *req)
 {
-    char *html = malloc(12288);
+    const size_t page_len = 16384; // Seite im PSRAM
+    char *html = heap_caps_malloc(page_len, MALLOC_CAP_SPIRAM);
     if (!html) return ESP_FAIL;
     ota_status_t o;
     ota_get(&o);
@@ -119,11 +140,28 @@ static esp_err_t root_get(httpd_req_t *req)
     for (int i = 0; i <= NIGHT_COLORS; i++)
         nl += snprintf(ncol + nl, sizeof(ncol) - nl, "<option value=%d%s>%s</option>", i,
                        g_settings.night_color == i ? " selected" : "", NIGHT_COLOR_NAMES[i]);
+    // WLAN: aktuelles Netz und zuletzt gefundene als Auswahl; die Seite fragt beim Laden /scan nach einer frischen Liste
+    char ssid_esc[200], wopts[1600];
+    html_esc(ssid_esc, sizeof(ssid_esc), g_settings.wifi_ssid);
+    int wl = 0;
+    if (g_settings.wifi_ssid[0]) wl += snprintf(wopts, sizeof(wopts), "<option value='%s' selected>%s</option>", ssid_esc, ssid_esc);
+    for (int i = 0; i < s_scan_n && wl < (int)sizeof(wopts) - 220; i++) {
+        if (!strcmp(s_scan[i].ssid, g_settings.wifi_ssid)) continue;
+        char e[200];
+        html_esc(e, sizeof(e), s_scan[i].ssid);
+        wl += snprintf(wopts + wl, sizeof(wopts) - wl, "<option value='%s'>%s</option>", e, e);
+    }
+    snprintf(wopts + wl, sizeof(wopts) - wl, "<option value=''%s>Anderes Netzwerk …</option>", g_settings.wifi_ssid[0] ? "" : " selected");
+    char wx_lat[16] = "", wx_lon[16] = "";
+    if (g_settings.wx_ll) {
+        snprintf(wx_lat, sizeof(wx_lat), "%.5f", g_settings.wx_lat);
+        snprintf(wx_lon, sizeof(wx_lon), "%.5f", g_settings.wx_lon);
+    }
     // Wetter: eingetragener Ort und was das Display dazu gefunden hat
     char wx_line[200];
     data_lock();
     const weather_t *w = &data_get()->wx;
-    if (!g_settings.wx_place[0]) snprintf(wx_line, sizeof(wx_line), "Name, Postleitzahl oder Koordinaten (Breite, Länge)");
+    if (!g_settings.wx_place[0]) snprintf(wx_line, sizeof(wx_line), "Stadt oder Postleitzahl eintippen und aus der Liste wählen");
     else if (w->place[0] && !w->err[0]) snprintf(wx_line, sizeof(wx_line), "Gefunden: <span class=acc>%s</span>%s%s", w->place, w->region[0] ? " · " : "", w->region);
     else if (w->err[0]) snprintf(wx_line, sizeof(wx_line), "<span class=acc>%s</span>", w->err);
     else snprintf(wx_line, sizeof(wx_line), "wird gesucht …");
@@ -132,12 +170,13 @@ static esp_err_t root_get(httpd_req_t *req)
     float c = g_settings.kwh_price * 100.0f;
     snprintf(ct, sizeof(ct), c == (int)c ? "%.0f" : "%.1f", c);
     for (char *q = ct; *q; q++) if (*q == '.') *q = ',';
-    snprintf(html, 12288,
+    int len = snprintf(html, page_len,
              "%s<h1>Satoshi Deck</h1><p>Einstellungen für dein Display. <span class=acc>Speichern startet es neu.</span></p>"
-             "<form method=post action=/save>"
+             "<form method=post action=/save onsubmit=wsub()>"
              "<div class=sec>Verbindung</div>"
-             "<label>WLAN-Name</label><input name=ssid list=nets value='%s' required maxlength=32 autocomplete=off>"
-             "<datalist id=nets>%s</datalist>"
+             "<label>WLAN</label><select id=wsel onchange=ws()>%s</select>"
+             "<input name=ssid id=ssid value='%s' required maxlength=32 autocomplete=off placeholder='Name des WLANs' style='margin-top:8px%s'>"
+             "<p><small id=wst>suche Netzwerke …</small></p>"
              "<label>WLAN-Passwort</label><input name=pass type=password maxlength=64 placeholder='%s'>"
              "<label>Bitaxe – IP-Adresse</label><input name=bitaxe value='%s' placeholder='192.168.1.42' maxlength=63>"
              "<div class=sec>Preisalarm</div>"
@@ -157,8 +196,10 @@ static esp_err_t root_get(httpd_req_t *req)
              "<div class=cards style='grid-template-columns:1fr'><label><input type=checkbox name=ereset value=1>"
              "Stromzähler zurücksetzen</label></div>"
              "<div class=sec>Wetter</div>"
-             "<label>Ort</label><input name=wx value='%s' placeholder='z. B. Berlin, 80331 oder Frankfurt, DE' maxlength=47>"
-             "<p><small>%s</small></p>"
+             "<label>Ort</label><input name=wx id=wx value='%s' placeholder='Stadt oder Postleitzahl' maxlength=47 autocomplete=off oninput=wq()>"
+             "<select id=wxs onchange=wp() style='margin-top:8px;display:none'></select>"
+             "<input type=hidden name=wxlat id=wxlat value='%s'><input type=hidden name=wxlon id=wxlon value='%s'>"
+             "<p><small id=wxi>%s</small></p>"
              "<div class=sec>News</div>"
              "<label>Quelle der Schlagzeilen</label><select name=news>%s</select>"
              "<p><small>Crypto Vision: englisch, viele Quellen · Blocktrainer: deutsch · Bitcoin Magazine: englisch</small></p>"
@@ -174,17 +215,48 @@ static esp_err_t root_get(httpd_req_t *req)
              "<form method=post action=/ota style='display:flex;gap:10px'>"
              "<button name=a value=check style='margin-top:12px;background:#000;color:var(--fg);border:1px solid var(--line)'>Nach Updates suchen</button>"
              "%s</form>"
+             "<script>"
+             // WLAN: Auswahl übernehmen bzw. Feld für einen eigenen Namen zeigen; frische Liste vom Display holen
+             "function ws(){var s=document.getElementById('wsel'),i=document.getElementById('ssid');"
+             "if(s.value){i.value=s.value;i.style.display='none'}else{i.style.display='';i.focus()}}"
+             "function bars(r){return r>-56?'\\u25AE\\u25AE\\u25AE\\u25AE':r>-68?'\\u25AE\\u25AE\\u25AE\\u25AF':r>-76?'\\u25AE\\u25AE\\u25AF\\u25AF':'\\u25AE\\u25AF\\u25AF\\u25AF'}"
+             "fetch('/scan').then(function(r){return r.json()}).then(function(a){var s=document.getElementById('wsel'),"
+             "cur=document.getElementById('ssid').value,keep=s.value,seen={};while(s.options.length)s.remove(0);"
+             "a.forEach(function(n){if(seen[n.s])return;seen[n.s]=1;s.add(new Option(n.s+'   '+bars(n.r),n.s))});"
+             "if(cur&&!seen[cur])s.add(new Option(cur+'   (nicht in Reichweite)',cur),0);"
+             "s.add(new Option('Anderes Netzwerk \\u2026',''));s.value=keep;"
+             "var k=Object.keys(seen).length;document.getElementById('wst').textContent=k?k+' Netzwerke in Reichweite':'Keine Netzwerke gefunden'})"
+             ".catch(function(){document.getElementById('wst').textContent='Suche nicht möglich \\u2013 Namen unter \\u201eAnderes Netzwerk\\u201c eintragen'});"
+             // Wetter: Orte bei Open-Meteo suchen, Treffer als Auswahl; die Koordinaten gehen mit
+             "var wt;function wq(){document.getElementById('wxlat').value='';document.getElementById('wxlon').value='';"
+             "clearTimeout(wt);wt=setTimeout(wf,400)}"
+             "function wf(){var q=document.getElementById('wx').value.trim(),s=document.getElementById('wxs'),"
+             "t=document.getElementById('wxi');if(q.length<2){s.style.display='none';return}"
+             "fetch('https://geocoding-api.open-meteo.com/v1/search?count=8&language=de&format=json&name='+encodeURIComponent(q))"
+             ".then(function(r){return r.json()}).then(function(d){var a=d.results||[];while(s.options.length)s.remove(0);"
+             "a.forEach(function(r){var o=new Option(r.name+' \\u00b7 '+[r.admin1,r.country].filter(Boolean).join(', '),"
+             "r.latitude+','+r.longitude);o.dataset.n=r.name;s.add(o)});s.style.display=a.length?'':'none';"
+             "t.textContent=a.length?'':'Kein Ort gefunden';if(a.length)wp(1)})"
+             ".catch(function(){t.textContent='Ortssuche nicht erreichbar \\u2013 das Display sucht den Ort beim Speichern selbst'})}"
+             // beim Tippen den ersten Treffer nur vormerken; den Namen übernimmt erst die Auswahl bzw. das Speichern
+             "function wp(auto){var s=document.getElementById('wxs'),o=s.options[s.selectedIndex];if(!o)return;"
+             "var c=o.value.split(',');document.getElementById('wxlat').value=c[0];document.getElementById('wxlon').value=c[1];"
+             "if(!auto)document.getElementById('wx').value=o.dataset.n;document.getElementById('wxi').textContent='Gewählt: '+o.text}"
+             "function wsub(){var s=document.getElementById('wxs'),o=s.options[s.selectedIndex];"
+             "if(o&&document.getElementById('wxlat').value)document.getElementById('wx').value=o.dataset.n}"
+             "</script>"
              "<p style='margin-top:28px'><small>0 = Alarm aus · IP des Bitaxe steht im AxeOS-Webinterface · "
              "Wetterdaten: <a href='https://open-meteo.com/'>Open-Meteo.com</a> (CC BY 4.0)</small></p>"
              "</main></body></html>",
-             PAGE_HEAD, g_settings.wifi_ssid, s_scan_html,
+             PAGE_HEAD, wopts, ssid_esc, g_settings.wifi_ssid[0] ? ";display:none" : "",
              g_settings.wifi_pass[0] ? "unverändert lassen" : "", g_settings.bitaxe_host[0],
              settings_cur(), g_settings.alarm_hi, settings_cur(), g_settings.alarm_lo, g_settings.night_from, g_settings.night_to, ncol,
              g_settings.clock_style == 3 ? "selected" : "", g_settings.clock_style == 0 ? "selected" : "",
              g_settings.chart_style == 0 ? "selected" : "", g_settings.chart_style == 1 ? "selected" : "",
              g_settings.chart_style == 2 ? "selected" : "",
-             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, g_settings.wx_place, wx_line, nsrc, order, cards,
+             g_settings.auto_update ? "selected" : "", g_settings.auto_update ? "" : "selected", ct, g_settings.wx_place, wx_lat, wx_lon, wx_line, nsrc, order, cards,
              deck_version(), ota_line, ota_btn);
+    if (len >= (int)page_len) ESP_LOGW(TAG, "Einstellungsseite abgeschnitten (%d Zeichen)", len);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, html);
     free(cards);
@@ -250,6 +322,14 @@ static esp_err_t save_post(httpd_req_t *req)
         for (char *q = p; *q; q++) if (strchr("<>'\"&", *q)) *q = ' ';
         for (int n = strlen(p); n > 0 && p[n - 1] == ' '; n--) p[n - 1] = 0;
         strlcpy(g_settings.wx_place, p, sizeof(g_settings.wx_place));
+        char la[20] = "", lo[20] = "";
+        form_field(body, "wxlat", la, sizeof(la));
+        form_field(body, "wxlon", lo, sizeof(lo));
+        char *e1, *e2;
+        float fa = strtof(la, &e1), fo = strtof(lo, &e2);
+        g_settings.wx_ll = la[0] && lo[0] && e1 != la && e2 != lo && fabsf(fa) <= 90 && fabsf(fo) <= 180;
+        g_settings.wx_lat = fa;
+        g_settings.wx_lon = fo;
     }
     if (form_field(body, "news", v, sizeof(v))) { int c = atoi(v); if (c >= 0 && c < NEWS_SOURCES) g_settings.news_src = c; }
     if (form_field(body, "clk", v, sizeof(v))) g_settings.clock_style = atoi(v) == 0 ? 0 : 3;
@@ -286,11 +366,25 @@ static esp_err_t save_post(httpd_req_t *req)
     settings_save();
     ESP_LOGI(TAG, "Einstellungen gespeichert (SSID '%s', Bitaxe '%s')", g_settings.wifi_ssid, g_settings.bitaxe_host[0]);
 
-    char html[3800];
-    snprintf(html, sizeof(html), "%s<h1>Gespeichert.</h1><p>Das Display startet neu und verbindet sich mit <span class=acc>%s</span>.</p></main></body></html>",
-             PAGE_HEAD, g_settings.wifi_ssid);
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_sendstr(req, html);
+    char ssid_esc[200];
+    html_esc(ssid_esc, sizeof(ssid_esc), g_settings.wifi_ssid);
+    const size_t hl = 6144;
+    char *html = malloc(hl);
+    if (html) {
+        snprintf(html, hl,
+                 "%s<h1>Gespeichert.</h1><p>Das Display startet neu und verbindet sich mit <span class=acc>%s</span>.</p>"
+                 "<p><small id=st>Neustart läuft – das dauert ein paar Sekunden.</small></p>"
+                 "<a class='btn wait' id=bk href=/>Zurück zu den Einstellungen &rarr;</a>"
+                 "<script>var n=0;function p(){fetch('/ping',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;"
+                 "document.getElementById('bk').className='btn';document.getElementById('st').textContent='Das Display ist wieder da.'})"
+                 ".catch(function(){if(++n<20)setTimeout(p,1500);else document.getElementById('st').textContent="
+                 "'Keine Antwort. Wurde das WLAN geändert, hat das Display eine neue Adresse – sie steht in den Einstellungen am Display.'})}"
+                 "setTimeout(p,5000)</script></main></body></html>",
+                 PAGE_HEAD, ssid_esc);
+        httpd_resp_set_type(req, "text/html; charset=utf-8");
+        httpd_resp_sendstr(req, html);
+        free(html);
+    } else httpd_resp_sendstr(req, "Gespeichert.");
 
     const esp_timer_create_args_t a = {.callback = restart_cb, .name = "restart"};
     esp_timer_handle_t t;
@@ -307,14 +401,47 @@ static esp_err_t ota_post(httpd_req_t *req)
         if (!strcmp(v, "install")) ota_install_now();
         else ota_check_now();
     }
-    char html[3800];
-    snprintf(html, sizeof(html), "%s<h1>%s</h1><p>%s</p><p><a class=acc href=/>Zurück &rarr;</a></p></main></body></html>", PAGE_HEAD,
+    char *html = malloc(4096);
+    if (!html) return httpd_resp_send_500(req);
+    snprintf(html, 4096, "%s<h1>%s</h1><p>%s</p><p><a class=acc href=/>Zurück &rarr;</a></p></main></body></html>", PAGE_HEAD,
              strcmp(v, "install") ? "Suche läuft." : "Update startet.",
              strcmp(v, "install") ? "Das Display fragt GitHub nach einer neuen Version. Seite gleich neu laden."
                                   : "Das Display lädt die neue Firmware und startet danach neu. Nicht ausschalten.");
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, html);
+    free(html);
     return ESP_OK;
+}
+
+// Netze in Reichweite als JSON [{"s":Name,"r":Signal}]; im Setup-WLAN die beim Start gefundenen (eine neue Suche
+// würde die Verbindung zum Handy kurz unterbrechen)
+static esp_err_t scan_get(httpd_req_t *req)
+{
+    if (!s_portal_on) scan_networks();
+    char *out = malloc(2600);
+    if (!out) return httpd_resp_send_500(req);
+    int o = snprintf(out, 2600, "[");
+    for (int i = 0; i < s_scan_n && o < 2400; i++) {
+        o += snprintf(out + o, 2600 - o, "%s{\"s\":\"", i ? "," : "");
+        for (const char *c = s_scan[i].ssid; *c && o < 2560; c++) {
+            if (*c == '"' || *c == '\\') out[o++] = '\\';
+            if ((unsigned char)*c >= 0x20) out[o++] = *c;
+        }
+        o += snprintf(out + o, 2600 - o, "\",\"r\":%d}", s_scan[i].rssi);
+    }
+    snprintf(out + o, 2600 - o, "]");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr(req, out);
+    free(out);
+    return ESP_OK;
+}
+
+// Lebenszeichen für die Seite nach dem Speichern
+static esp_err_t ping_get(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, "ok");
 }
 
 static esp_err_t redirect_get(httpd_req_t *req)
@@ -329,14 +456,18 @@ static void start_http(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.uri_match_fn = httpd_uri_match_wildcard;
-    cfg.stack_size = 8192;
+    cfg.stack_size = 10240;
     httpd_handle_t srv;
     if (httpd_start(&srv, &cfg) != ESP_OK) return;
     httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get};
     httpd_uri_t save = {.uri = "/save", .method = HTTP_POST, .handler = save_post};
     httpd_uri_t any = {.uri = "/*", .method = HTTP_GET, .handler = redirect_get};
     httpd_uri_t ota = {.uri = "/ota", .method = HTTP_POST, .handler = ota_post};
+    httpd_uri_t scan = {.uri = "/scan", .method = HTTP_GET, .handler = scan_get};
+    httpd_uri_t ping = {.uri = "/ping", .method = HTTP_GET, .handler = ping_get};
     httpd_register_uri_handler(srv, &ota);
+    httpd_register_uri_handler(srv, &scan);
+    httpd_register_uri_handler(srv, &ping);
     httpd_register_uri_handler(srv, &root);
     httpd_register_uri_handler(srv, &save);
     httpd_register_uri_handler(srv, &any);
@@ -348,15 +479,30 @@ static void scan_networks(void)
 {
     wifi_scan_config_t sc = {.show_hidden = false};
     if (esp_wifi_scan_start(&sc, true) != ESP_OK) return;
-    uint16_t n = 20;
-    wifi_ap_record_t recs[20];
+    uint16_t n = SCAN_MAX;
+    wifi_ap_record_t *recs = malloc(sizeof(wifi_ap_record_t) * SCAN_MAX);
+    if (!recs) { esp_wifi_clear_ap_list(); return; }
     esp_wifi_scan_get_ap_records(&n, recs);
-    int off = 0;
-    s_scan_html[0] = 0;
-    for (int i = 0; i < n && off < (int)sizeof(s_scan_html) - 80; i++) {
-        if (!recs[i].ssid[0] || strchr((char *)recs[i].ssid, '\'') || strchr((char *)recs[i].ssid, '<')) continue;
-        off += snprintf(s_scan_html + off, sizeof(s_scan_html) - off, "<option value='%s'>", recs[i].ssid);
+    int k = 0;
+    for (int i = 0; i < n; i++) { // ohne leere Namen und doppelte (Repeater), stärkstes zuerst
+        if (!recs[i].ssid[0]) continue;
+        int j = 0;
+        while (j < k && strcmp(s_scan[j].ssid, (char *)recs[i].ssid)) j++;
+        if (j < k) {
+            if (recs[i].rssi > s_scan[j].rssi) s_scan[j].rssi = recs[i].rssi;
+            continue;
+        }
+        strlcpy(s_scan[k].ssid, (char *)recs[i].ssid, sizeof(s_scan[k].ssid));
+        s_scan[k++].rssi = recs[i].rssi;
     }
+    free(recs);
+    for (int i = 1; i < k; i++)
+        for (int j = i; j > 0 && s_scan[j].rssi > s_scan[j - 1].rssi; j--) {
+            typeof(s_scan[0]) t = s_scan[j];
+            s_scan[j] = s_scan[j - 1];
+            s_scan[j - 1] = t;
+        }
+    s_scan_n = k;
 }
 
 static void start_portal(void)

@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include <math.h>
 #include <string.h>
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -87,6 +88,12 @@ void settings_load(void)
     get_str(h, "pass", g_settings.wifi_pass, sizeof(g_settings.wifi_pass));
     for (int i = 0; i < DECK_MAX_MINERS; i++) get_str(h, MINER_KEYS[i], g_settings.bitaxe_host[i], sizeof(g_settings.bitaxe_host[i]));
     get_str(h, "wx", g_settings.wx_place, sizeof(g_settings.wx_place));
+    int32_t la, lo;
+    if (nvs_get_i32(h, "wxla", &la) == ESP_OK && nvs_get_i32(h, "wxlo", &lo) == ESP_OK) {
+        g_settings.wx_ll = true;
+        g_settings.wx_lat = la / 1e5f;
+        g_settings.wx_lon = lo / 1e5f;
+    }
     // Strompreis: neuer Schlüssel; vom alten nur selbst gesetzte Werte übernehmen (0,35 war der frühere Standard)
     uint32_t k;
     if (nvs_get_u32(h, "kwh2", &k) == ESP_OK) g_settings.kwh_price = k / 1000.0f;
@@ -145,6 +152,13 @@ void settings_save(void)
     nvs_set_str(h, "pass", g_settings.wifi_pass);
     for (int i = 0; i < DECK_MAX_MINERS; i++) nvs_set_str(h, MINER_KEYS[i], g_settings.bitaxe_host[i]);
     nvs_set_str(h, "wx", g_settings.wx_place);
+    if (g_settings.wx_ll) {
+        nvs_set_i32(h, "wxla", (int32_t)lroundf(g_settings.wx_lat * 1e5f));
+        nvs_set_i32(h, "wxlo", (int32_t)lroundf(g_settings.wx_lon * 1e5f));
+    } else {
+        nvs_erase_key(h, "wxla");
+        nvs_erase_key(h, "wxlo");
+    }
     nvs_set_u32(h, "kwh2", (uint32_t)(g_settings.kwh_price * 1000.0f + 0.5f));
     nvs_set_u32(h, "al_hi", (uint32_t)(g_settings.alarm_hi + 0.5f));
     nvs_set_u32(h, "al_lo", (uint32_t)(g_settings.alarm_lo + 0.5f));

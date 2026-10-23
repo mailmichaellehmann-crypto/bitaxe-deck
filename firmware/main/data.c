@@ -324,8 +324,19 @@ static int fetch_weather(void)
         wx_error("Ort im Browser eintragen");
         return 60000;
     }
+    bool ll = g_settings.wx_ll;
+#ifdef CONFIG_DECK_SNAPSHOT
+    ll = false;
+#endif
     if (strcmp(s_wx_for, place)) {
-        if (!wx_geocode(place)) return 5 * 60000;
+        if (ll) { // im Browser aus der Ortssuche gewählt
+            data_lock();
+            s_d.wx.lat = g_settings.wx_lat;
+            s_d.wx.lon = g_settings.wx_lon;
+            strlcpy(s_d.wx.place, place, sizeof(s_d.wx.place));
+            s_d.wx.region[0] = 0;
+            data_unlock();
+        } else if (!wx_geocode(place)) return 5 * 60000;
         strlcpy(s_wx_for, place, sizeof(s_wx_for));
     }
     char url[400], err[48] = "";

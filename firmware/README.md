@@ -98,10 +98,12 @@ Auf der Browser-Seite lässt sich unter „Uhr“ stattdessen die klassische Uhr
 ## Wetter
 
 Aktuelles Wetter und die Aussicht für die nächsten 5 Tage von [Open-Meteo](https://open-meteo.com/)
-(kostenlos, ohne Schlüssel; Daten unter CC BY 4.0). Den **Ort** trägt man auf der Browser-Seite unter
-„Wetter“ ein: Name („Berlin“), Postleitzahl („80331“), mit Ländercode bei gleichnamigen Orten
-(„Frankfurt, DE“) oder Koordinaten („52.52, 13.41“). Das Display sucht den Ort einmal nach dem Start und
-zeigt auf der Browser-Seite, was es gefunden hat. Die Wetterdaten lädt es alle 15 Minuten neu.
+(kostenlos, ohne Schlüssel; Daten unter CC BY 4.0). Den **Ort** wählt man auf der Browser-Seite unter
+„Wetter“: Stadt oder Postleitzahl eintippen, darunter erscheinen die Treffer der Open-Meteo-Ortssuche zur
+Auswahl („Frankfurt (Oder) · Brandenburg, Deutschland“); gespeichert werden Name und Koordinaten. Ohne
+Auswahl (z. B. im Setup-WLAN ohne Internet) sucht das Display den eingetippten Namen nach dem Start selbst –
+auch mit Ländercode („Frankfurt, DE“) oder als Koordinaten („52.52, 13.41“). Die Wetterdaten lädt es alle
+15 Minuten neu.
 
 Die Wettersymbole sind Pixel-Mosaike aus 13 × 13 Zellen wie der Kursverlauf auf der Preiskarte: Sonne
 und Blitz in Pink, Wolken, Regen, Schnee und Nebel in Graustufen, nachts Mond statt Sonne. Das große
@@ -187,7 +189,10 @@ Reihenfolge; mit ↑ und ↓ lassen sich die Karten auch dort verschieben.
 1. Board per USB-C mit Strom versorgen. Ohne WLAN öffnet sich die Konfiguration.
 2. QR-Code mit dem Handy scannen (verbindet direkt mit dem WLAN **`SatoshiDeck-Setup`**) oder von Hand verbinden, Passwort **`satoshi21`**.
 3. Im Browser **http://192.168.4.1** öffnen.
-4. Heim-WLAN (2,4 GHz), WLAN-Passwort und die **IP-Adresse deines Bitaxe** (z. B. `192.168.1.42`) eintragen → *Speichern & neu starten*.
+4. Heim-WLAN (2,4 GHz) aus der Liste der Netze in Reichweite wählen (oder unter „Anderes Netzwerk …“ den
+   Namen eintippen), WLAN-Passwort und die **IP-Adresse deines Bitaxe** (z. B. `192.168.1.42`) eintragen →
+   *Speichern*. Die Seite danach zeigt, sobald das Display neu gestartet ist, einen Knopf zurück zu den
+   Einstellungen.
 
 Später lassen sich die Einstellungen im Heimnetz unter `http://<IP des Displays>` ändern; IP und QR-Code zeigt die Konfiguration (langer Druck).
 Ein Hostname wie `bitaxe.local` funktioniert auf dem ESP32 nicht, bitte die IP eintragen.

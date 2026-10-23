@@ -3407,7 +3407,7 @@ static void build_boot(void)
             if (v && (h % 61) == 0) v = 255; // vereinzelte pinke Zellen
             BS.target[r * 60 + c] = v;
         }
-    BS.sub = cap(BS.scr, W, "SOLO MINING TERMINAL", 'l', MX, 104);
+    BS.sub = cap(BS.scr, W, "BITCOIN DISPLAY", 'l', MX, 104);
     BS.word = tight(txt(BS.scr, W, &font_g50, C_TEXT, "Satoshi Deck", 'l', MX - 2, 158), 2);
     BS.ver = txt(BS.scr, W, &font_m12, C_TEXT3, "", 'l', MX, 182);
     lv_label_set_text_fmt(BS.ver, "v.%s", deck_version());
