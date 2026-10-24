@@ -876,18 +876,22 @@ static void build_clock(lv_obj_t *t)
 
 // ---- Uhr als LED-Punktanzeige: Siebensegment-Ziffern aus LED-Punkten (7 × 13 je Ziffer), passend
 // zur Punktmatrix des Charts – quadratische Punkte wie überall im Deck, leuchtende glimmen leicht.
-// Unbeleuchtete Segmente schimmern schwach, dahinter ein feines Punktraster.
+// Unbeleuchtete Segmente schimmern schwach, dahinter ein feines Punktraster. Beim Minutenwechsel verlöschen
+// die alten Punkte, die neuen fallen von oben auf ihren Platz (die unteren Reihen zuerst).
 // Die LEDs leuchten in der Trendfarbe (gestiegen hellgrün, gefallen pink), darunter eine Sekundenreihe.
-#define LD_P 10                           // Abstand der LED-Punkte
-#define LD_DOT 8                          // Kantenlänge eines LED-Punkts
+#define LD_P 11                           // Abstand der LED-Punkte
+#define LD_DOT 9                          // Kantenlänge eines LED-Punkts
 #define LD_CW 7                           // Ziffer: 7 × 13 Punkte
 #define LD_CH 13
 #define LD_COLS 37                        // Ziffer, 2 frei, Ziffer, 2 frei, Doppelpunkt, 2 frei, Ziffer, 2 frei, Ziffer
-#define LD_Y 46                           // Lage der Leinwand
-#define LD_H 182
+#define LD_Y 38                           // Lage der Leinwand
+#define LD_H 192
 #define LD_ROW0 1                         // erste Punktreihe der Ziffern
-#define LD_SEC_Y 164                      // Mitte der Sekundenreihe (in der Leinwand)
-#define LD_FADE 180                       // Überblenden der Segmente (ms)
+#define LD_SEC_Y 178                      // Mitte der Sekundenreihe (in der Leinwand)
+#define LD_OUT 160                        // alte Punkte verlöschen (ms)
+#define LD_FALL 420                       // Fallzeit eines neuen Punkts (ms)
+#define LD_STAGGER 40                     // Versatz je Reihe, von unten nach oben (ms)
+#define LD_ANIM (LD_STAGGER * (LD_CH - 1) + 3 * 25 + LD_FALL) // bis alle gelandet sind
 #define LD_GRID 16                        // Helligkeit: Raster, unbeleuchtetes Segment, Glimmen, Sekunden
 #define LD_GHOST 34
 #define LD_PAST 92
@@ -896,7 +900,7 @@ static canvas8_t LDC;
 static struct {
     lv_obj_t *tile, *date, *trend;
     uint8_t seg_old[4], seg_new[4];       // beleuchtete Segmente je Ziffer (Bits a … g)
-    int64_t t0;                           // Start des Überblendens, 0 = ruhig
+    int64_t t0;                           // Start des Wechsels, 0 = ruhig
     int shown, sec, x0;
     bool on;
 } LD;
@@ -947,8 +951,8 @@ static void ld_draw(int64_t now)
 {
     canvas8_t *c = &LDC;
     memset(c->px, 0, c->w * c->h);
-    float f = LD.t0 ? (now - LD.t0) / (float)LD_FADE : 1;
-    if (f >= 1) { f = 1; LD.t0 = 0; }
+    int t = LD.t0 ? (int)(now - LD.t0) : LD_ANIM;
+    if (t >= LD_ANIM) { t = LD_ANIM; LD.t0 = 0; }
     int rows = LD_SEC_Y / LD_P - 1;
     // feines Raster wie ein LED-Panel (an den Ziffern ausgerichtet)
     for (int gy = 0; gy < rows; gy++)
@@ -960,10 +964,21 @@ static void ld_draw(int64_t now)
             for (int x = 0; x < LD_CW; x++) {
                 uint8_t bit = ld_seg_at(x, y);
                 if (!bit) continue;
-                float o = (LD.seg_old[k] & bit) ? 1 : 0, n = (LD.seg_new[k] & bit) ? 1 : 0, on = o + (n - o) * f;
+                bool o = LD.seg_old[k] & bit, n = LD.seg_new[k] & bit;
                 int cx = LD.x0 + (dcol[k] + x) * LD_P + LD_P / 2, cy = (LD_ROW0 + y) * LD_P + LD_P / 2;
+                float on = o && n ? 1 : o ? 1 - t / (float)LD_OUT : 0; // bleibt bzw. verlischt
+                if (on < 0) on = 0;
                 if (on > 0.02f) ld_dot(cx, cy, LD_DOT + 4, (uint8_t)(LD_GLOW * on)); // Glimmen
                 ld_dot(cx, cy, LD_DOT, (uint8_t)(LD_GHOST + (255 - LD_GHOST) * on));
+                if (n && !o) { // neuer Punkt fällt von oben, schneller werdend; Spalten leicht versetzt
+                    int d = (LD_CH - 1 - y) * LD_STAGGER + (int)(hash2(k * 8 + x, 77) % 4) * 25;
+                    float p = (t - d) / (float)LD_FALL;
+                    if (p <= 0) continue;
+                    if (p > 1) p = 1;
+                    int fy = -LD_P + (int)((cy + LD_P) * p * p);
+                    ld_dot(cx, fy, LD_DOT + 4, LD_GLOW);
+                    ld_dot(cx, fy, LD_DOT, 255);
+                }
             }
     // Doppelpunkt
     bool colon = LD.sec < 0 || LD.sec % 2 == 0;
@@ -1000,7 +1015,7 @@ static void ld_tick(lv_timer_t *tm)
         sec = tmv.tm_sec;
     }
     bool redraw = false;
-    if (minute != LD.shown) { // neue Minute: geänderte Segmente blenden über
+    if (minute != LD.shown) { // neue Minute: alte Punkte verlöschen, neue fallen
         for (int k = 0; k < 4; k++) {
             LD.seg_old[k] = LD.seg_new[k];
             LD.seg_new[k] = ld_segs(d[k]);
@@ -3108,7 +3123,7 @@ static void bench_cb(lv_timer_t *t)
     static int idx = -1, wait = 0, row = -1, ticks = 0, sid = 0;
     static lv_img_dsc_t *snap;
     static const int ba_at[4] = {700, 1250, 1900, 3500}; // Block-Animation: Aufnahmezeitpunkte (ms)
-    static const int ld_at[2] = {90, 600};           // Uhr: Aufnahmen während und nach dem Wechsel (ms)
+    static const int ld_at[2] = {450, 1300};         // Uhr: Aufnahmen während und nach dem Wechsel (ms)
     static const double tr_chg[2] = {2.34, -1.45};   // Uhr mit Trend rauf / runter
     ticks++;
     if (idx >= N_TILES + 3 + 4 + NIGHT_COLORS + 2 + 2) return;

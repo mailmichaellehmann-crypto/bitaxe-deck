@@ -86,9 +86,11 @@ ihnen sind die Zellen ausgespart.
 ## Uhr: LED-Punktanzeige
 
 Standard-Uhr im Stil einer klassischen LED-Anzeige, passend zur Punktmatrix des Charts: Die Ziffern sind
-Siebensegment-Ziffern aus quadratischen LED-Punkten (7 × 13 Punkte je Ziffer, 8 px groß), wie die Punkte überall im Deck; leuchtende Punkte glimmen leicht. Unbeleuchtete Segmente schimmern
-schwach, dahinter liegt ein feines Punktraster wie auf einem LED-Panel. Beim Minutenwechsel blenden die
-Segmente kurz über, darunter füllt sich eine Reihe aus 60 kleinen LEDs – eine pro Sekunde.
+Siebensegment-Ziffern aus quadratischen LED-Punkten (7 × 13 Punkte je Ziffer, 9 px groß), wie die Punkte überall im Deck; leuchtende Punkte glimmen leicht. Unbeleuchtete Segmente schimmern
+schwach, dahinter liegt ein feines Punktraster wie auf einem LED-Panel. Beim Minutenwechsel verlöschen die
+alten Punkte, die neuen fallen von oben auf ihren Platz – die unteren Reihen zuerst, die Spalten leicht
+versetzt, schneller werdend wie beim Boot-Screen. Darunter füllt sich eine Reihe aus 60 kleinen LEDs – eine
+pro Sekunde.
 
 **24h-Trend:** Die LEDs leuchten in der Farbe der Kursänderung der letzten 24 Stunden – hellgrün
 (`#9BE3B0`), wenn der Bitcoin-Kurs gestiegen ist, pink (`#FFD4D4`), wenn er gefallen ist. Unter dem
