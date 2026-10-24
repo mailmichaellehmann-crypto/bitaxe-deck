@@ -879,15 +879,15 @@ static void build_clock(lv_obj_t *t)
 // Unbeleuchtete Segmente schimmern schwach, dahinter ein feines Punktraster. Beim Minutenwechsel verlöschen
 // die alten Punkte, die neuen fallen von oben auf ihren Platz (die unteren Reihen zuerst).
 // Die LEDs leuchten in der Trendfarbe (gestiegen hellgrün, gefallen pink), darunter eine Sekundenreihe.
-#define LD_P 11                           // Abstand der LED-Punkte
-#define LD_DOT 9                          // Kantenlänge eines LED-Punkts
+#define LD_P 12                           // Abstand der LED-Punkte
+#define LD_DOT 10                         // Kantenlänge eines LED-Punkts
 #define LD_CW 7                           // Ziffer: 7 × 13 Punkte
 #define LD_CH 13
 #define LD_COLS 37                        // Ziffer, 2 frei, Ziffer, 2 frei, Doppelpunkt, 2 frei, Ziffer, 2 frei, Ziffer
-#define LD_Y 38                           // Lage der Leinwand
-#define LD_H 192
+#define LD_Y 30                           // Lage der Leinwand
+#define LD_H 206
 #define LD_ROW0 1                         // erste Punktreihe der Ziffern
-#define LD_SEC_Y 178                      // Mitte der Sekundenreihe (in der Leinwand)
+#define LD_SEC_Y 194                      // Mitte der Sekundenreihe (in der Leinwand)
 #define LD_OUT 160                        // alte Punkte verlöschen (ms)
 #define LD_FALL 420                       // Fallzeit eines neuen Punkts (ms)
 #define LD_STAGGER 40                     // Versatz je Reihe, von unten nach oben (ms)
@@ -988,10 +988,10 @@ static void ld_draw(int64_t now)
         ld_dot(cx, cy, LD_DOT, colon ? 255 : 70);
     }
     // Sekundenreihe: 60 kleine LEDs
-    int sp = 6, sx0 = (c->w - 59 * sp) / 2;
+    int sp = 7, sx0 = (c->w - 59 * sp) / 2;
     for (int q = 0; q < 60; q++) {
         uint8_t v = LD.sec < 0 || q > LD.sec ? LD_GHOST : q == LD.sec ? 255 : LD_PAST;
-        ld_dot(sx0 + q * sp, LD_SEC_Y, 3, v);
+        ld_dot(sx0 + q * sp, LD_SEC_Y, 4, v);
     }
     lv_obj_invalidate(c->cv);
 }
