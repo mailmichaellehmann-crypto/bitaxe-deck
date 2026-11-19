@@ -3,7 +3,8 @@
 //  0 Preis · 1 USD & EUR · 2 Chart · 3 Block · 4 Neuer Block · 5 Halving · 6 Gebühren · 7 Difficulty · 8 Uhr
 //  9 Wetter · 10 Bitaxe · 11 Kosten · 12 Share-Lotterie · 13 News (Reihenfolge einstellbar)
 // Gestaltung: tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen, Geist Mono für
-// Beschriftungen, 1-px-Rahmen, Punktmatrix-Chart, Pixel-Mosaik; einzige Akzentfarbe: Pink #FFD4D4.
+// Beschriftungen, 1-px-Rahmen, Punktmatrix-Chart, Pixel-Mosaik; eine Akzentfarbe (Standard Rosa #FFD4D4,
+// auf der Browser-Seite wählbar).
 
 #include "ui.h"
 
@@ -22,6 +23,7 @@
 #include "esp_timer.h"
 #include "lvgl.h"
 #include "net.h"
+#include "regie.h"
 #include "settings.h"
 #include "shares.h"
 #ifdef CONFIG_DECK_SNAPSHOT
@@ -49,8 +51,13 @@ LV_FONT_DECLARE(font_m20);
 #define C_TEXT lv_color_hex(0xECECEC)
 #define C_TEXT2 lv_color_hex(0x9A9A9A)
 #define C_TEXT3 lv_color_hex(0x5E5E5E)
-#define C_PINK lv_color_hex(0xFFD4D4)    // Akzent (sRGB 255/212/212)
-#define C_PINK_DIM lv_color_hex(0x7A6464)
+static lv_color_t s_acc, s_acc_dim;      // Akzentfarbe (Standard Rosa #FFD4D4) und ihre gedämpfte Stufe
+static char s_acc_hex[8];                // als „RRGGBB“ für gefärbte Textstellen
+#define C_PINK s_acc
+#define C_PINK_DIM s_acc_dim
+// „gefallen“ bleibt Rosa, unabhängig vom Akzent – eine Farbstufe neben dem Standard-Akzent, damit ein
+// Akzentwechsel im Betrieb diese Stellen nicht mit umfärbt
+#define C_FALL lv_color_hex(0xFFD0D4)
 #define C_UP lv_color_hex(0x9BE3B0)
 #define C_DOWN lv_color_hex(0xFF9C9C)
 
@@ -277,15 +284,24 @@ typedef struct {
     int w, h;
 } canvas8_t;
 
+static canvas8_t *s_c8[12]; // alle 8-Bit-Leinwände (für den Akzentwechsel)
+static int s_c8_n;
+
+static void canvas8_accent(canvas8_t *c)
+{
+    for (int i = 0; i < 16; i++) lv_canvas_set_palette(c->cv, PX_PINK0 + i, lv_color_mix(C_PINK, C_BG, (uint8_t)(32 + i * 223 / 15)));
+}
+
 static void canvas8_create(canvas8_t *c, lv_obj_t *parent, int x, int y, int w, int h)
 {
+    if (s_c8_n < (int)(sizeof(s_c8) / sizeof(s_c8[0]))) s_c8[s_c8_n++] = c;
     c->w = w;
     c->h = h;
     c->buf = heap_caps_malloc(LV_CANVAS_BUF_SIZE_INDEXED_8BIT(w, h), MALLOC_CAP_SPIRAM);
     c->cv = lv_canvas_create(parent);
     lv_canvas_set_buffer(c->cv, c->buf, w, h, LV_IMG_CF_INDEXED_8BIT);
     for (int i = 0; i < PX_PINK0; i++) lv_canvas_set_palette(c->cv, i, lv_color_make(i, i, i));
-    for (int i = 0; i < 16; i++) lv_canvas_set_palette(c->cv, PX_PINK0 + i, lv_color_mix(C_PINK, C_BG, (uint8_t)(32 + i * 223 / 15)));
+    canvas8_accent(c);
     c->px = (uint8_t *)c->buf + 4 * 256;
     memset(c->px, 0, w * h);
     lv_obj_set_pos(c->cv, x, y);
@@ -332,7 +348,7 @@ static struct { lv_obj_t *cur, *chg, *range_lbl, *range, *xlab[5], *msg; tween_t
 static struct { lv_obj_t *height, *age, *halving; } D;                                       // Block
 static struct { lv_obj_t *fee[3], *fiat[3], *height, *sats, *sats_t; } E;                    // Gebühren
 static struct { lv_obj_t *chg, *cells[55], *blocks, *pct; } F;                               // Difficulty
-static struct { lv_obj_t *time, *date, *trend; } G;                                          // Uhr
+static struct { lv_obj_t *time, *date, *trend, *tile; } G;                                         // Uhr
 static struct { lv_obj_t *title, *status, *dot, *hash, *unit, *legend, *cells[55], *val[3]; } HB; // Bitaxe
 
 // ---- 0 Preis: großer Kurs, darunter der Kursverlauf als Pixel-Mosaik
@@ -542,6 +558,7 @@ static int car_current(void) { return s_cur; }
 #define NOTE_MS 15000
 static int s_note_ret = -1;    // Karte vor dem Hinweis
 static int64_t s_note_t0;      // ms, 0 = kein Rücksprung offen
+static int64_t s_note_end;     // Ende des letzten Hinweises (ms)
 
 static void note_jump(int card)
 {
@@ -555,6 +572,7 @@ static void note_tick(bool overlay)
 {
     if (!s_note_t0) return;
     int64_t since = esp_timer_get_time() / 1000 - s_note_t0;
+    if (lv_disp_get_inactive_time(NULL) + 500 < since || since >= NOTE_MS) s_note_end = esp_timer_get_time() / 1000;
     if (lv_disp_get_inactive_time(NULL) + 500 < since) s_note_t0 = 0; // berührt: bleibt, wo man ist
     else if (since >= NOTE_MS) {
         s_note_t0 = 0;
@@ -852,8 +870,10 @@ static void build_difficulty(lv_obj_t *t)
 // (hellgrün) oder gefallen (pink) ist.
 #define DECK_SNAP_CLOCK 3                 // Screenshot-Modus: Uhr-Stil für die Aufnahmen
 static void build_led(lv_obj_t *t);
+static void clock_style_apply(void);
+static int32_t s_trend_key = INT32_MIN;   // zuletzt gezeigte 24h-Änderung (INT32_MIN = neu setzen)
 static int s_trend;                       // 24h-Kurs: +1 gestiegen, -1 gefallen, 0 unbekannt
-static lv_color_t trend_col(void) { return s_trend > 0 ? C_UP : s_trend < 0 ? C_PINK : C_TEXT3; }
+static lv_color_t trend_col(void) { return s_trend > 0 ? C_UP : s_trend < 0 ? C_FALL : C_TEXT3; }
 
 static void build_clock(lv_obj_t *t)
 {
@@ -862,16 +882,8 @@ static void build_clock(lv_obj_t *t)
     lv_obj_set_style_text_letter_space(G.date, 2, 0);
     G.trend = txt(t, W, &font_m14, C_TEXT3, "", 'c', W / 2, 262);
     lv_obj_set_style_text_letter_space(G.trend, 1, 0);
-    int style = g_settings.clock_style;
-#ifdef CONFIG_DECK_SNAPSHOT
-    style = DECK_SNAP_CLOCK; // Aufnahmen mit festem Uhr-Stil (ändert die gespeicherte Einstellung nicht)
-#endif
-    if (style == 3) { // LED: die klassischen Beschriftungen bleiben (Zeit auf den Preiskarten), unsichtbar
-        lv_obj_add_flag(G.time, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(G.date, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(G.trend, LV_OBJ_FLAG_HIDDEN);
-        build_led(t);
-    }
+    G.tile = t;
+    clock_style_apply();
 }
 
 // ---- Uhr als LED-Punktanzeige: Siebensegment-Ziffern aus LED-Punkten (7 × 13 je Ziffer), passend
@@ -902,7 +914,7 @@ static struct {
     uint8_t seg_old[4], seg_new[4];       // beleuchtete Segmente je Ziffer (Bits a … g)
     int64_t t0;                           // Start des Wechsels, 0 = ruhig
     int shown, sec, x0;
-    bool on;
+    bool on, built;                       // sichtbar / schon aufgebaut
 } LD;
 
 // Segmente: a oben, b rechts oben, c rechts unten, d unten, e links unten, f links oben, g Mitte
@@ -1034,7 +1046,7 @@ static void ld_tick(lv_timer_t *tm)
 
 static void build_led(lv_obj_t *t)
 {
-    LD.on = true;
+    LD.built = true;
     LD.tile = t;
     canvas8_create(&LDC, t, 0, LD_Y, W, LD_H);
     LD.x0 = (W - LD_COLS * LD_P) / 2;
@@ -1048,6 +1060,36 @@ static void build_led(lv_obj_t *t)
     LD.sec = -1;
     ld_draw(0);
     lv_timer_create(ld_tick, 30, NULL);
+}
+
+// Uhr-Stil anwenden, auch im Betrieb: die LED-Anzeige bei Bedarf einmal aufbauen, die andere ausblenden.
+// Die klassischen Beschriftungen bleiben bestehen (die Preiskarten zeigen ihre Uhrzeit).
+static void clock_style_apply(void)
+{
+    int style = g_settings.clock_style;
+#ifdef CONFIG_DECK_SNAPSHOT
+    style = DECK_SNAP_CLOCK; // Aufnahmen mit festem Uhr-Stil (ändert die gespeicherte Einstellung nicht)
+#endif
+    bool led = style == 3;
+    if (led && !LD.built) build_led(G.tile);
+    lv_obj_t *classic[3] = {G.time, G.date, G.trend};
+    for (int i = 0; i < 3; i++) {
+        if (led) lv_obj_add_flag(classic[i], LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_clear_flag(classic[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    if (LD.built) {
+        lv_obj_t *l[3] = {LDC.cv, LD.date, LD.trend};
+        for (int i = 0; i < 3; i++) {
+            if (led) lv_obj_clear_flag(l[i], LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(l[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (led && !LD.on) { // Ziffern, Datum und Trend frisch setzen
+        LD.shown = -2;
+        lv_label_set_text(G.date, "");
+        s_trend_key = INT32_MIN;
+    }
+    LD.on = led;
 }
 
 // 24h-Änderung auf der Uhr zeigen: LED-Farbe und Zeile unter dem Datum in Grün oder Pink
@@ -1070,12 +1112,11 @@ static void clock_trend_apply(double chg)
 
 static void clock_trend(deck_data_t *d)
 {
-    static int32_t last = INT32_MIN;
     if (!d->price_ok) return;
     double chg = g_settings.currency ? d->chg24_eur : d->chg24;
     int32_t key = (int32_t)lround(chg * 100) * 2 + g_settings.currency;
-    if (key == last) return;
-    last = key;
+    if (key == s_trend_key) return;
+    s_trend_key = key;
     clock_trend_apply(chg);
 }
 
@@ -1433,7 +1474,7 @@ static void news_render(const deck_data_t *d)
         // Alter in Blöcken · Uhrzeit (heute) bzw. Datum · Quelle
         char age[40] = "", when[16] = "", src[32], b[160];
         int bl = net_time_valid() ? blocks_since(d, it->ts) : -1;
-        if (bl == 0) strlcpy(age, "#FFD4D4 NEU#", sizeof(age));
+        if (bl == 0) snprintf(age, sizeof(age), "#%s NEU#", s_acc_hex);
         else if (bl == 1) strlcpy(age, "VOR 1 BLOCK", sizeof(age));
         else if (bl > 1) {
             char n[16];
@@ -1458,7 +1499,7 @@ static void news_render(const deck_data_t *d)
             if (fabs(pct) < 0.005) strlcpy(b, "0,00 %", sizeof(b)); // kein „–0,00 %“
             else fmt_change(b, sizeof(b), pct);
             lv_label_set_text(NW.chg[r], b);
-            lv_obj_set_style_text_color(NW.chg[r], pct >= 0.005 ? C_UP : pct <= -0.005 ? C_PINK : C_TEXT2, 0);
+            lv_obj_set_style_text_color(NW.chg[r], pct >= 0.005 ? C_UP : pct <= -0.005 ? C_FALL : C_TEXT2, 0);
             nw_spark(r, d, it->ts, now, live, pct >= 0 ? 1 : -1);
         } else {
             lv_label_set_text(NW.chg[r], "–");
@@ -1468,17 +1509,23 @@ static void news_render(const deck_data_t *d)
     lv_obj_invalidate(NWC.cv);
 }
 
+// Palette der Mini-Kurven: Rosa für gefallen, Grün für gestiegen (nicht die Akzentfarbe)
+static void nw_palette(void)
+{
+    for (int i = 0; i < 8; i++) {
+        uint8_t a = 40 + i * 215 / 7;
+        lv_canvas_set_palette(NWC.cv, NW_PINK0 + i, lv_color_mix(C_FALL, C_BG, a));
+        lv_canvas_set_palette(NWC.cv, NW_GREEN0 + i, lv_color_mix(C_UP, C_BG, a));
+    }
+}
+
 static void build_news(lv_obj_t *t)
 {
     NW.tile = t;
     cap(t, W, "BITCOIN NEWS", 'l', MX, 30);
     lv_obj_set_style_text_color(cap(t, W, "KURS SEIT MELDUNG", 'r', W - MX, 30), C_TEXT3, 0);
     canvas8_create(&NWC, t, NW_CX, NW_Y0, W - MX - NW_CX, NW_ROWS * NW_RH);
-    for (int i = 0; i < 8; i++) {
-        uint8_t a = 40 + i * 215 / 7;
-        lv_canvas_set_palette(NWC.cv, NW_PINK0 + i, lv_color_mix(C_PINK, C_BG, a));
-        lv_canvas_set_palette(NWC.cv, NW_GREEN0 + i, lv_color_mix(C_UP, C_BG, a));
-    }
+    nw_palette();
     for (int r = 0; r < NW_ROWS; r++) {
         int top = NW_Y0 + r * NW_RH;
         NW.meta[r] = cap(t, W, "", 'l', MX, top + 15);
@@ -1568,7 +1615,7 @@ static void cost_render(void)
     // Kosten eines Tages in sats: der Preis des Lotterieloses
     if (KS.btc > 0) {
         fmt_de(n, sizeof(n), kwh_day * g_settings.kwh_price / KS.btc * 1e8, 0);
-        snprintf(b, sizeof(b), "ca. #FFD4D4 %s sat# pro Tag", n);
+        snprintf(b, sizeof(b), "ca. #%s %s sat# pro Tag", s_acc_hex, n);
     } else snprintf(b, sizeof(b), "ca. – sat pro Tag");
     lv_label_set_text(KS.ticket, b);
     // gezählter Verbrauch
@@ -1929,7 +1976,7 @@ static void lottery_tick(lv_timer_t *t)
     else if (ratio >= 1e6) { fmt_de(n2, sizeof(n2), ratio / 1e6, 1); strlcat(n2, " Mio.", sizeof(n2)); }
     else if (ratio > 0) fmt_de(n2, sizeof(n2), ratio, 0);
     else strcpy(n2, "–");
-    snprintf(b, sizeof(b), "%s Hashes  ·  bis zum Block fehlt noch Faktor #FFD4D4 %s#", n1, n2);
+    snprintf(b, sizeof(b), "%s Hashes  ·  bis zum Block fehlt noch Faktor #%s %s#", n1, s_acc_hex, n2);
     lv_label_set_text(L.foot, b);
     bool visible = s_card[car_current()] == L.tile && s_nb < 0;
     double last = st->last;
@@ -2078,22 +2125,27 @@ static void update_chart(deck_data_t *d)
 static double subsidy_at(uint32_t h) { return 50.0 / pow(2, h / 210000); }
 
 static bool night_window(void);
+static uint32_t s_card_h; // zuletzt auf der Karte „Neuer Block“ gezeigte Höhe (0 = neu aufbauen)
+static block_info_t s_blk[BLOCKS_N];
+static int s_blk_n;
 static void update_network(deck_data_t *d)
 {
     if (!d->net_ok || d->net_ver == v_net) return;
     v_net = d->net_ver;
     char b[96], n[24], n2[24];
-    static uint32_t card_h = 0; // zuletzt auf der Karte „Neuer Block“ gezeigte Höhe
-    if (d->blocks_n && d->height != card_h) {
+    if (d->blocks_n && d->height != s_card_h) {
         const block_info_t *bi = &d->blocks[0];
-        if (card_h && d->height > card_h) {
-            block_anim_show(card_h, d->height, bi->pool, bi->tx_count, bi->reward_btc, bi->timestamp);
+        memcpy(s_blk, d->blocks, sizeof(s_blk));
+        s_blk_n = d->blocks_n;
+        if (s_card_h && d->height > s_card_h) {
+            block_anim_show(s_card_h, d->height, bi->pool, bi->tx_count, bi->reward_btc, bi->timestamp);
             hg_drop();
-            // „Neuer Block“ eingeschaltet: für 15 s zur Karte springen und das Display wecken – nicht im Nachtmodus
-            if (g_settings.block_note && card_on(CARD_NEWBLOCK) && !s_booting && !SW.down && !K.scrub && !night_window())
+            // Regie mit „Neuer Block“: für 15 s zur Karte springen und das Display wecken – nicht im Nachtmodus
+            if (g_settings.regie_on && (g_settings.regie_mask & (1u << RG_BLOCK)) && card_on(CARD_NEWBLOCK) && !s_booting && !SW.down &&
+                !K.scrub && !night_window())
                 note_jump(CARD_NEWBLOCK);
         } else block_card_set(d->height, bi->pool, bi->tx_count, bi->reward_btc, bi->timestamp);
-        card_h = d->height;
+        s_card_h = d->height;
     }
     fmt_plain(b, sizeof(b), d->height);
     lv_label_set_text(D.height, b);
@@ -2163,7 +2215,7 @@ static void update_miner(deck_data_t *d)
     fmt_diff(n1, sizeof(n1), m->session_diff);
     fmt_diff(n2, sizeof(n2), m->best_diff);
     fmt_diff(n3, sizeof(n3), D);
-    snprintf(b, sizeof(b), "#FFD4D4 SESSION %s#   #9A9A9A BEST %s#   #5E5E5E NETZ %s#", n1, n2, n3);
+    snprintf(b, sizeof(b), "#%s SESSION %s#   #9A9A9A BEST %s#   #5E5E5E NETZ %s#", s_acc_hex, n1, n2, n3);
     lv_label_set_text(HB.legend, b);
     fmt_de(n1, sizeof(n1), m->temp, 1);
     lv_label_set_text(HB.val[0], n1);
@@ -2262,11 +2314,14 @@ static void toast_tick(void)
 }
 
 // ------------------------------------------------------------------ 4 Neuer Block (eigene Karte)
-// Kette der letzten Blöcke als Pixel-Blöcke, der neueste in Pink, rechts ein freier Platz für den
-// nächsten. Kommt ein Block, fällt er auf den freien Platz, die Höhe rollt wie ein Zählwerk hoch,
+// Kette der letzten Blöcke als Pixel-Blöcke, der neueste in der Akzentfarbe, rechts ein freier Platz für
+// den nächsten. Kommt ein Block, fällt er auf den freien Platz, die Höhe rollt wie ein Zählwerk hoch,
 // dann rückt die Kette einen Platz weiter.
+// Jeder Block ist sein Porträt: die 64 Hex-Ziffern seines Hashes als 8 × 8 Zellen, 0 = dunkel … F = hell.
+// Die dunklen Reihen oben sind die führenden Nullen – der sichtbare Arbeitsnachweis.
 #define BA_N 6                            // Plätze in der Kette (der letzte ist der nächste Block)
-#define BA_SZ 48                          // Kantenlänge eines Blocks: 6 × 6 Zellen à 8 px
+#define BA_SZ 48                          // Kantenlänge eines Blocks: 8 × 8 Zellen à 6 px
+#define BA_CELL (BA_SZ / 8)
 #define BA_PITCH 72
 #define BA_X0 ((W - BA_N * BA_PITCH) / 2)
 #define BA_Y 82
@@ -2279,15 +2334,24 @@ static struct {
     int64_t ts;                           // Zeitstempel des neuesten Blocks
 } BA;
 
-static void ba_paint(canvas_t *c, uint32_t seed, bool fresh)
+// s_blk: die zuletzt geladenen Blöcke (für die Porträts), neuester zuerst
+static const uint8_t *blk_hash(uint32_t height)
 {
-    static const uint32_t pk[4] = {0xFFD4D4, 0xE8BDBD, 0xC9A3A3, 0x9C8080};
+    for (int i = 0; i < s_blk_n; i++)
+        if (s_blk[i].height == height && s_blk[i].has_hash) return s_blk[i].hash;
+    return NULL;
+}
+
+// Porträt des Blocks mit dieser Höhe; ohne bekannten Hash ein Muster aus der Höhe
+static void ba_paint(canvas_t *c, uint32_t height, bool fresh)
+{
+    const uint8_t *hash = blk_hash(height);
     lv_canvas_fill_bg(c->cv, C_BG, LV_OPA_COVER);
-    for (int r = 0; r < 6; r++)
-        for (int q = 0; q < 6; q++) {
-            uint32_t h = hash2((int)(seed % 100000) * 7 + q, r + 31);
-            fill_box(c, q * 8, r * 8, 7, 7, fresh ? lv_color_hex(pk[h % 4]) : gray(0x2A + (int)(h % 0x38)));
-        }
+    for (int i = 0; i < 64; i++) {
+        int n = hash ? (i & 1 ? hash[i / 2] & 15 : hash[i / 2] >> 4) : (int)(hash2((int)(height % 100000) * 7 + i, 31) % 16);
+        lv_color_t col = fresh ? lv_color_mix(C_PINK, C_BG, (uint8_t)(30 + n * 15)) : gray(0x14 + n * 7);
+        fill_box(c, (i % 8) * BA_CELL, (i / 8) * BA_CELL, BA_CELL - 1, BA_CELL - 1, col);
+    }
     lv_obj_invalidate(c->cv);
 }
 
@@ -2603,7 +2667,7 @@ static void ota_tick(void)
 }
 
 typedef struct { lv_obj_t *track, *knob, *val; bool on; const char *t_on, *t_off; void (*cb)(bool); } toggle_t;
-static toggle_t T_cur, T_alarm, T_night, T_block;
+static toggle_t T_cur, T_alarm, T_night, T_regie;
 
 static void knob_exec(void *var, int32_t v) { lv_obj_set_x(var, v); }
 
@@ -2664,7 +2728,7 @@ static void apply_currency(void)
 static void on_cur(bool usd) { g_settings.currency = usd ? 0 : 1; settings_save(); apply_currency(); }
 static void on_alarm(bool on) { g_settings.alarm_on = on; settings_save(); }
 static void on_night(bool on) { g_settings.night_on = on; settings_save(); }
-static void on_block(bool on) { g_settings.block_note = on; settings_save(); }
+static void on_regie(bool on) { g_settings.regie_on = on; settings_save(); }
 
 static const uint16_t ROT_STEPS[] = {0, 5, 10, 15, 20, 30, 45, 60, 120, 300};
 #define ROT_N (sizeof(ROT_STEPS) / sizeof(ROT_STEPS[0]))
@@ -2772,11 +2836,12 @@ static void open_cfg(void)
     } else {
         snprintf(qr, sizeof(qr), "http://%s", ip[0] ? ip : "192.168.4.1");
         lv_label_set_text(s_cfg_l1, "QR-Code scannen oder im Browser öffnen:");
-        snprintf(b, sizeof(b), "%s →", ip[0] ? ip : "–");
+        snprintf(b, sizeof(b), "%s.local  ·  %s", DECK_HOSTNAME, ip[0] ? ip : "–");
         lv_label_set_text(s_cfg_l2, b);
     }
     lv_qrcode_update(s_qr, qr, strlen(qr));
     stepper_labels();
+    if (T_regie.on != g_settings.regie_on) toggle_set(&T_regie, g_settings.regie_on, false);
     lv_obj_add_flag(s_menu, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(s_cfg, LV_OBJ_FLAG_HIDDEN);
 }
@@ -2982,6 +3047,24 @@ static void bottom_bar(lv_obj_t *p, int si, bool gear)
     lv_obj_add_event_cb(x, close_cb, LV_EVENT_CLICKED, NULL);
 }
 
+// PIN vergessen: das QR-Feld 3 s gedrückt halten löscht die PIN der Browser-Seite
+static void pin_reset_cb(lv_event_t *e)
+{
+    static int64_t t0;
+    static bool done;
+    int64_t ms = esp_timer_get_time() / 1000;
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        t0 = ms;
+        done = false;
+    } else if (code == LV_EVENT_LONG_PRESSED_REPEAT && !done && ms - t0 >= 3000 && g_settings.web_pin[0]) {
+        done = true;
+        g_settings.web_pin[0] = 0;
+        settings_save();
+        toast_show("BROWSER-SEITE", "PIN gelöscht", 4000);
+    }
+}
+
 static void build_overlays(void)
 {
     // Konfiguration
@@ -2991,6 +3074,9 @@ static void build_overlays(void)
     lv_obj_set_style_radius(qb, 10, 0);
     s_qr = lv_qrcode_create(qb, 72, lv_color_black(), C_TEXT);
     lv_obj_center(s_qr);
+    lv_obj_clear_flag(qb, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_clear_flag(s_qr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(qb, pin_reset_cb, LV_EVENT_ALL, NULL);
     txt(s_cfg, W, &font_g26, C_TEXT, "Einstellungen", 'l', 120, 40);
     lv_obj_t *pl;
     s_upd_pill = pill(s_cfg, W - MX - 150, 12, 150, 26, "", &pl);
@@ -3005,7 +3091,7 @@ static void build_overlays(void)
     toggle_tile(&T_alarm, s_cfg, xs[1], 108, "PREISALARM", "EIN", "AUS", g_settings.alarm_on, on_alarm);
     s_rot_val = stepper_tile(s_cfg, xs[2], 108, "SEITENWECHSEL", 0);
     toggle_tile(&T_night, s_cfg, xs[0], 192, "NACHTMODUS", "EIN", "AUS", g_settings.night_on, on_night);
-    toggle_tile(&T_block, s_cfg, xs[1], 192, "NEUER BLOCK", "EIN", "AUS", g_settings.block_note, on_block);
+    toggle_tile(&T_regie, s_cfg, xs[1], 192, "REGIE", "EIN", "AUS", g_settings.regie_on, on_regie);
     s_range_val = stepper_tile(s_cfg, xs[2], 192, "CHART", 2);
     bottom_bar(s_cfg, 0, false);
     lv_obj_add_flag(s_cfg, LV_OBJ_FLAG_HIDDEN);
@@ -3073,9 +3159,200 @@ static void auto_tick(void)
     }
 }
 
+// ------------------------------------------------------------------ Regie, Alter der Daten, Akzentfarbe, Einstellungen im Betrieb
+
+static bool overlay_open(void) { return !lv_obj_has_flag(s_cfg, LV_OBJ_FLAG_HIDDEN) || !lv_obj_has_flag(s_menu, LV_OBJ_FLAG_HIDDEN); }
+
+// Kleine Pille über den Karten: unten der Anlass der Regie, oben das Alter der Daten. Lässt Berührungen durch.
+// Liegt auf dem Bildschirm selbst (nach den Karten und Einstellungen angelegt, also darüber), damit sie auch
+// in den Aufnahmen des Screenshot-Modus erscheint.
+static lv_obj_t *s_rg, *s_rg_lbl, *s_stale, *s_stale_lbl;
+static int64_t s_rg_until;
+
+static lv_obj_t *pill_create(lv_obj_t **lbl, lv_color_t dot, lv_color_t border)
+{
+    lv_obj_t *p = rect(lv_scr_act(), 0, 0, 60, 24, C_BG);
+    lv_obj_set_style_radius(p, 12, 0);
+    lv_obj_set_style_border_width(p, 1, 0);
+    lv_obj_set_style_border_color(p, border, 0);
+    lv_obj_clear_flag(p, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(rect(p, 10, 9, 5, 5, dot), LV_OBJ_FLAG_CLICKABLE);
+    *lbl = cap(p, 60, "", 'l', 22, 16);
+    lv_obj_set_style_text_color(*lbl, C_TEXT, 0);
+    lv_obj_add_flag(p, LV_OBJ_FLAG_HIDDEN);
+    return p;
+}
+
+// Text setzen und die Pille mittig auf cx zeigen
+static void pill_show(lv_obj_t *p, lv_obj_t *lbl, const char *text, int cx, int y)
+{
+    lv_label_set_text(lbl, text);
+    lv_obj_update_layout(lbl);
+    int w = 22 + lv_obj_get_width(lbl) + 11;
+    lv_obj_set_size(p, w, 24);
+    lv_obj_set_pos(p, cx - w / 2, y);
+    lv_obj_clear_flag(p, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Karte zum Ereignis (Reihenfolge wie regie_ev_t)
+static const uint8_t RG_CARD[RG_N] = {CARD_NEWBLOCK, 0, 6, 10, 12, CARD_NEWS, CARD_WEATHER, 7};
+
+// Ereignis zeigen: für 15 s zur Karte (danach zurück), unten steht kurz der Anlass
+static void regie_show(const regie_hit_t *h)
+{
+    int card = RG_CARD[h->ev];
+    if (h->ev == RG_SHARE && !card_on(card)) card = 10; // ohne Lotterie-Karte: Bitaxe
+    if (!card_on(card)) return;
+    if (card != s_cur) note_jump(card);
+    pill_show(s_rg, s_rg_lbl, h->text, W / 2, H - 38);
+    lv_obj_fade_in(s_rg, 250, 0);
+    s_rg_until = esp_timer_get_time() / 1000 + 6000;
+}
+
+static void regie_tick(deck_data_t *d)
+{
+    static int n;
+    int64_t ms = esp_timer_get_time() / 1000;
+    if (s_rg_until && (ms > s_rg_until || overlay_open())) {
+        lv_obj_add_flag(s_rg, LV_OBJ_FLAG_HIDDEN);
+        s_rg_until = 0;
+    }
+#ifdef CONFIG_DECK_SNAPSHOT
+    if (n >= 0) return; // Aufnahmen nicht durch Sprünge stören
+#endif
+    if (++n % 4) return; // alle 2 s
+    bool quiet = night_window() || !net_time_valid();
+    regie_feed(d, g_settings.currency, ms, time(NULL), quiet);
+    regie_hit_t h;
+    if (!g_settings.regie_on) { // aus: Vorgemerktes verwerfen
+        regie_take(ms, 0, &h);
+        return;
+    }
+    // nur, wenn gerade niemand am Display ist und nichts anderes läuft; sonst bleibt es bis zu 3 min vorgemerkt
+    bool idle = !s_booting && !overlay_open() && !SW.down && !K.scrub && !quiet && !s_note_t0 && !s_toast_until && !s_rg_until &&
+                ms - s_note_end > 20000 && lv_disp_get_inactive_time(NULL) > 15000;
+    if (idle && regie_take(ms, g_settings.regie_mask, &h)) regie_show(&h);
+}
+
+// Alter der Daten: Pille oben, wenn der letzte erfolgreiche Abruf für die aktuelle Karte zu lange her ist
+#ifdef CONFIG_DECK_SNAPSHOT
+static const char *s_stale_test; // Screenshot-Modus: fester Text
+#endif
+static void stale_tick(deck_data_t *d)
+{
+    static int64_t offline_since;
+    int64_t ms = esp_timer_get_time() / 1000;
+    int64_t age = -1, limit = 4 * 60000; // age -1: Karte ohne Internet-Daten oder mit eigener Anzeige
+    bool never = false;
+    switch (s_cur) {
+    case 0: case 1: never = !d->price_ms; age = ms - d->price_ms; break;
+    case 2: never = !d->chart_ms; age = ms - d->chart_ms; limit = 20 * 60000; break;
+    case 3: case CARD_NEWBLOCK: case 6: case 7: never = !d->net_ms; age = ms - d->net_ms; break;
+    case CARD_NEWS: never = !d->news.updated; age = (int64_t)(time(NULL) - d->news.updated) * 1000; limit = 30 * 60000; break;
+    }
+    if (net_state() == NET_CONNECTED) offline_since = 0;
+    else if (!offline_since) offline_since = ms;
+    char b[32] = "";
+    if (age >= 0 && !s_booting && !overlay_open() && !s_animating && !SW.drag) {
+        if (offline_since && ms - offline_since > 20000) strlcpy(b, "KEIN WLAN", sizeof(b));
+        else if (never) strlcpy(b, ms > 90000 ? "KEINE DATEN" : "", sizeof(b));
+        else if (age > limit) {
+            int min = (int)(age / 60000);
+            if (min < 90) snprintf(b, sizeof(b), "VOR %d MIN", min);
+            else snprintf(b, sizeof(b), "VOR %d STD", min / 60);
+        }
+#ifdef CONFIG_DECK_SNAPSHOT
+        b[0] = 0;
+        if (s_stale_test) strlcpy(b, s_stale_test, sizeof(b));
+#endif
+    }
+    bool hidden = lv_obj_has_flag(s_stale, LV_OBJ_FLAG_HIDDEN);
+    if (!b[0]) {
+        if (!hidden) lv_obj_add_flag(s_stale, LV_OBJ_FLAG_HIDDEN);
+    } else if (hidden || strcmp(lv_label_get_text(s_stale_lbl), b)) pill_show(s_stale, s_stale_lbl, b, 214, 13);
+}
+
+// Akzentfarbe aus der Liste setzen (nur die Werte; beim Start vor dem Aufbau der Oberfläche)
+static void accent_set(int idx)
+{
+    uint32_t rgb = ACCENT_RGB[idx >= 0 && idx < ACCENTS ? idx : 0];
+    s_acc = lv_color_hex(rgb);
+    s_acc_dim = lv_color_mix(s_acc, C_BG, 122); // wie #7A6464 zu #FFD4D4
+    snprintf(s_acc_hex, sizeof(s_acc_hex), "%06X", (unsigned)rgb);
+}
+
+// alle lokalen Farben eines Objekts und seiner Kinder von der alten auf die neue Akzentfarbe umstellen
+static void restyle(lv_obj_t *o, const lv_color_t *from, const lv_color_t *to)
+{
+    static const lv_style_prop_t props[] = {LV_STYLE_BG_COLOR, LV_STYLE_TEXT_COLOR, LV_STYLE_BORDER_COLOR, LV_STYLE_LINE_COLOR,
+                                            LV_STYLE_OUTLINE_COLOR};
+    for (uint32_t i = 0; i < o->style_cnt; i++) {
+        if (!o->styles[i].is_local) continue;
+        for (unsigned p = 0; p < sizeof(props) / sizeof(props[0]); p++) {
+            lv_style_value_t v;
+            if (lv_style_get_prop(o->styles[i].style, props[p], &v) != LV_STYLE_RES_FOUND) continue;
+            for (int k = 0; k < 2; k++)
+                if (v.color.full == from[k].full) {
+                    v.color = to[k];
+                    lv_style_set_prop(o->styles[i].style, props[p], v);
+                    break;
+                }
+        }
+    }
+    uint32_t n = lv_obj_get_child_cnt(o);
+    for (uint32_t i = 0; i < n; i++) restyle(lv_obj_get_child(o, i), from, to);
+}
+
+// alles neu zeichnen, was Farben oder Einstellungen in Bildern und gefärbtem Text trägt
+static void redraw_all(void)
+{
+    v_price = v_chart = v_net = v_miner = v_cost = v_cost_p = v_wx = v_news = UINT32_MAX;
+    s_card_h = 0;
+    L.ver = 0;
+    s_trend_key = INT32_MIN;
+}
+
+// Akzentfarbe im Betrieb wechseln
+static void accent_apply(int idx)
+{
+    lv_color_t from[2] = {s_acc, s_acc_dim};
+    accent_set(idx);
+    lv_color_t to[2] = {s_acc, s_acc_dim};
+    if (from[0].full == to[0].full) return;
+    restyle(lv_scr_act(), from, to);
+    restyle(lv_layer_top(), from, to);
+    lv_obj_report_style_change(NULL);
+    for (int i = 0; i < s_c8_n; i++) {
+        canvas8_accent(s_c8[i]);
+        lv_obj_invalidate(s_c8[i]->cv);
+    }
+    if (LD.built) ld_palette(); // eigene Paletten (Trendfarbe, Mini-Kurven)
+    nw_palette();
+    redraw_all();
+}
+
+static volatile bool s_settings_dirty;
+void ui_settings_changed(void) { s_settings_dirty = true; }
+
+// Einstellungen von der Browser-Seite übernehmen, ohne Neustart (läuft im Takt der Oberfläche)
+static void settings_apply(void)
+{
+    accent_apply(g_settings.accent);
+    clock_style_apply();
+    if (!card_on(s_cur)) car_jump(card_step(s_cur, 1), false);
+    redraw_all(); // Chart-Fläche, Strompreis …
+    regie_reset(); // Vergleichswerte passen evtl. nicht mehr (News-Quelle)
+    if (T_regie.on != g_settings.regie_on) toggle_set(&T_regie, g_settings.regie_on, false);
+    ESP_LOGI("ui", "Einstellungen übernommen (ohne Neustart)");
+}
+
 static void ui_timer_cb(lv_timer_t *t)
 {
     static int ticks = 0;
+    if (s_settings_dirty) {
+        s_settings_dirty = false;
+        settings_apply();
+    }
     data_lock();
     deck_data_t *d = data_get();
     update_price(d);
@@ -3088,10 +3365,12 @@ static void ui_timer_cb(lv_timer_t *t)
     update_news(d);
     update_halving(d);
     if (ticks % 10 == 0) update_age(d);
+    regie_tick(d);
+    stale_tick(d);
     data_unlock();
     if (ticks % 2 == 0) update_clock();
     toast_tick();
-    note_tick(!lv_obj_has_flag(s_cfg, LV_OBJ_FLAG_HIDDEN) || !lv_obj_has_flag(s_menu, LV_OBJ_FLAG_HIDDEN));
+    note_tick(overlay_open());
     auto_tick();
     ota_tick();
     // Ohne WLAN: Konfiguration mit Einrichtungs-QR-Code öffnen
@@ -3126,7 +3405,7 @@ static void bench_cb(lv_timer_t *t)
     static const int ld_at[2] = {450, 1300};         // Uhr: Aufnahmen während und nach dem Wechsel (ms)
     static const double tr_chg[2] = {2.34, -1.45};   // Uhr mit Trend rauf / runter
     ticks++;
-    if (idx >= N_TILES + 3 + 4 + NIGHT_COLORS + 2 + 2) return;
+    if (idx >= N_TILES + 3 + 4 + NIGHT_COLORS + 2 + 2 + 3) return;
     if (idx < 0) {
         deck_data_t *d = data_get();
         bool ready = d->price_ok && d->net_ok && d->chart_ok;
@@ -3138,7 +3417,26 @@ static void bench_cb(lv_timer_t *t)
     }
     if (row < 0) {
         int k = idx - (N_TILES + 3); // davor: Karten, Einstellungen, Menü, Menü beim Ziehen
-        if (k >= 4 + NIGHT_COLORS + 2) { // Uhr mit 24h-Trend rauf bzw. runter
+        if (k >= 4 + NIGHT_COLORS + 4) { // Akzentfarbe im Betrieb wechseln, Regie-Einblendung, Alter der Daten
+            int q = k - 4 - NIGHT_COLORS - 4;
+            if (wait++ == 0) {
+                if (q == 0) {
+                    accent_apply(1);
+                    car_jump(CARD_NEWBLOCK, false);
+                } else if (q == 1) {
+                    accent_apply(4);
+                    car_jump(0, false);
+                    regie_hit_t h = {RG_PRICE, "KURS +1,2 % IN 15 MIN"};
+                    regie_show(&h);
+                } else {
+                    accent_apply(g_settings.accent);
+                    s_rg_until = 1;
+                    s_stale_test = "VOR 12 MIN";
+                }
+                return;
+            }
+            if (wait < 36) return;
+        } else if (k >= 4 + NIGHT_COLORS + 2) { // Uhr mit 24h-Trend rauf bzw. runter
             if (wait++ == 0) {
                 car_jump(8, false);
                 clock_trend_apply(tr_chg[k - 4 - NIGHT_COLORS - 2]);
@@ -3180,7 +3478,8 @@ static void bench_cb(lv_timer_t *t)
             }
             if (now - t0 < ba_at[k]) return;
         } else if (++wait < 20) return;
-        sid = k >= 4 + NIGHT_COLORS + 2 ? 70 + k - 4 - NIGHT_COLORS - 2
+        sid = k >= 4 + NIGHT_COLORS + 4 ? 80 + k - 4 - NIGHT_COLORS - 4
+            : k >= 4 + NIGHT_COLORS + 2 ? 70 + k - 4 - NIGHT_COLORS - 2
             : k >= 4 + NIGHT_COLORS     ? 60 + k - 4 - NIGHT_COLORS
             : k >= 4                    ? 50 + k - 4
             : k >= 0                    ? 30 + k
@@ -3480,6 +3779,7 @@ static void build_boot(void)
 
 void ui_init(void)
 {
+    accent_set(g_settings.accent);
     lv_obj_t *scr = lv_scr_act();
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(scr, C_BG, 0);
@@ -3516,6 +3816,8 @@ void ui_init(void)
     car_jump(card_on(first) ? first : card_step(first, 1), false);
     build_overlays();
     toast_create();
+    s_rg = pill_create(&s_rg_lbl, C_PINK, C_PINK);
+    s_stale = pill_create(&s_stale_lbl, C_DOWN, C_LINE2);
     build_update_screen();
     build_boot();
 

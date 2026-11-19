@@ -34,7 +34,9 @@ endlos im Kreis: nach der letzten kommt wieder die erste, in beide Richtungen. A
 
 Gestaltung im Stil von Strike (eigener Code): tiefschwarzer Grund, gedämpftes Weiß, Geist für große Zahlen,
 Geist Mono für Beschriftungen, feine Rahmen, Punktmatrix-Chart, Pixel-Mosaik als Kursverlauf.
-Einzige Akzentfarbe: softes Pink `#FFD4D4` (sRGB 255/212/212). Kursänderungen in gedämpftem Grün/Rot.
+Eine Akzentfarbe: softes Rosa `#FFD4D4` als Standard, auf der Browser-Seite wählbar (Rosa, Bitcoin-Orange, Gold,
+Mint, Eisblau, Lavendel) – der Wechsel gilt sofort. Kursänderungen in gedämpftem Grün/Rot; „gefallen“ auf Uhr und
+News bleibt Rosa, unabhängig vom Akzent.
 
 Ohne Bitaxe zeigt das Display Demo-Werte (Kennzeichen **DEMO**, türkis). Ist ein Bitaxe eingetragen,
 aber nicht erreichbar, steht dort **OFFLINE** in Rot, mit dem Grund; auch dann laufen Demo-Werte.
@@ -61,13 +63,17 @@ zurücksetzen.
 
 ## Neuer Block
 
-Eigene Karte mit der Kette der letzten fünf Blöcke als Pixel-Blöcke; der neueste ist pink, rechts
+Eigene Karte mit der Kette der letzten fünf Blöcke als Pixel-Blöcke; der neueste in der Akzentfarbe, rechts
 wartet ein freier Platz auf den nächsten. Darunter die Blockhöhe, Pool, Transaktionen und Belohnung,
 oben Uhrzeit und Alter („NEUER BLOCK“ in den ersten 10 Minuten, danach „LETZTER BLOCK“).
 
+**Block-Porträt:** Jeder Block zeigt seinen echten Hash – die 64 Hex-Ziffern als 8 × 8 Zellen, 0 dunkel
+bis F hell. Kein Block sieht aus wie ein anderer, und die dunklen Reihen oben sind die führenden Nullen
+des Hashes: der sichtbare Arbeitsnachweis.
+
 Kommt ein Block, fällt ein pinker Pixel-Block auf den freien Platz, die Verbindung leuchtet auf,
 die Blockhöhe rollt wie ein Zählwerk auf den neuen Wert, danach rückt die Kette einen Platz weiter.
-Ist in den Einstellungen „Neuer Block“ eingeschaltet, springt das Display dafür 15 Sekunden zu dieser Karte
+Ist die Regie eingeschaltet (siehe unten), springt das Display dafür 15 Sekunden zu dieser Karte
 und kehrt dann zur vorherigen zurück (berührt man es in der Zeit, bleibt es, wo man ist). Im Zeitfenster
 des Nachtmodus springt es nicht und weckt das Display nicht; die Karte zeigt den Block trotzdem.
 
@@ -137,6 +143,45 @@ Blöcken:** Statt „vor 40 Minuten“ steht über der Schlagzeile „VOR 4 BLÖ
 Blöcken von mempool.space, für ältere Meldungen mit 10 Minuten je Block geschätzt; ist seit der Meldung
 noch kein Block gefunden, steht dort ein pinkes „NEU“.
 
+## Regie
+
+Statt stur durchzublättern zeigt das Deck, was gerade passiert: Bei einem Ereignis springt es für
+15 Sekunden zur passenden Karte, unten steht kurz der Anlass, danach geht es zurück zur vorherigen Karte.
+
+| Ereignis | Anlass (Beispiel) | Karte |
+|----------|-------------------|-------|
+| Neuer Block | – | Neuer Block (mit Animation) |
+| Kurssprung: 1 % in 15 Minuten | „KURS +1,3 % IN 15 MIN“ | Preis |
+| Gebühren doppelt oder halb so hoch wie im Schnitt der letzten Stunde | „GEBÜHREN STEIGEN: 42 SAT/VB“ | Gebühren |
+| Bitaxe offline / wieder da, ab 70 °C (Regler 85 °C), Hashrate 3 min unter der Hälfte | „BITAXE HEISS: 71 °C“ | Bitaxe |
+| Neuer Bestwert seit dem Start des Miners, neuer Rekord-Share | „NEUER BESTWERT: 43,9 M“ | Lotterie |
+| Neue Schlagzeile | „NEUE SCHLAGZEILE“ | News |
+| Morgengruß (einmal zwischen 6 und 11 Uhr), Regen, Schnee, Gewitter setzen ein | „GUTEN MORGEN · HEUTE 14° / 6° · REGEN 75 %“ | Wetter |
+| Difficulty-Anpassung in 6 Blöcken bzw. gerade erfolgt | „DIFFICULTY IN 6 BLÖCKEN: +2,1 %“ | Difficulty |
+
+Die Regie hält sich zurück: nie im Zeitfenster des Nachtmodus, nicht während jemand das Display bedient
+(15 s Ruhe), mit Abstand zwischen zwei Einblendungen und mit Ruhezeiten je Ereignis (ein Kurssprung z. B.
+höchstens alle 17 Minuten). Was nicht gleich gezeigt werden kann, bleibt bis zu 3 Minuten vorgemerkt.
+Ein/Aus am Gerät („REGIE“) oder im Browser; dort lassen sich auch einzelne Ereignisse abwählen. Der
+automatische Seitenwechsel läuft daneben weiter.
+
+Die Erkennung steckt in `main/regie.c` (ohne Bildschirm-Code) und wird am Rechner getestet:
+`cc -Wall -I main tools/regie_test.c main/regie.c -lm -o /tmp/regie_test && /tmp/regie_test`
+(läuft auch bei jedem Build auf GitHub).
+
+## Datenquellen und Ausfälle
+
+Die Internet-Abrufe laufen in drei unabhängigen Tasks (Markt, Kette, Extras), damit eine hängende Quelle
+die anderen nicht aufhält. Ersatzquellen:
+
+- **Kurs und Chart:** CoinGecko; antwortet es mit „Too Many Requests“ (dann 5 Minuten Pause) oder gar nicht,
+  springt die öffentliche Kraken-API ein – Kurs samt 24h-Änderung und alle vier Chart-Zeiträume, in USD
+  und EUR. Für den Kurs zuletzt mempool.space.
+- **Blockdaten:** mempool.space, bei Problemen die Spiegelung mempool.emzy.de.
+
+Kann eine Karte ihre Daten länger nicht erneuern (Kurs und Blockdaten 4 Minuten, Chart 20, News 30), steht
+oben eine kleine Marke „VOR 12 MIN“; ohne WLAN „KEIN WLAN“. Die letzten Werte bleiben stehen.
+
 ## Nachtmodus
 
 Im eingestellten Zeitfenster schaltet das Display nach 30 Sekunden ohne Berührung auf schwache
@@ -173,7 +218,7 @@ alle 5 Minuten die Zahl der empfangenen Zeilen und Shares stehen im seriellen Lo
   nicht; steht der Kurs danach noch jenseits der Grenze, meldet er sich dann
 - **Seitenwechsel**: blättert automatisch weiter, wenn niemand das Display berührt (AUS, 5 s … 5 min)
 - **Nachtmodus**: im Zeitfenster (Standard 22–7 Uhr) nach 30 s ohne Berührung schwache Beleuchtung und alles in einer sanften Farbe (siehe unten); Berührung weckt
-- **Neuer Block**: springt bei einem neuen Block für 15 s zur Karte „Neuer Block“ mit Animation, nachts nicht (siehe oben)
+- **Regie**: zeigt bei Ereignissen (neuer Block, Kurssprung, …) für 15 s die passende Karte, nachts nicht (siehe oben)
 - **Chart**: Zeitraum 24h / 7T / 30T / 1J
 - unten: Kartenmenü (Raster-Symbol), Helligkeit, Schließen (✕)
 
@@ -184,8 +229,16 @@ weder beim Blättern noch beim automatischen Seitenwechsel. Eine Karte bleibt im
 nach, beim Loslassen ist die neue Reihenfolge gespeichert – in ihr wird geblättert, und mit der ersten
 startet das Deck. Zahnrad bzw. „Einstellungen“ führen zur Konfiguration.
 
-Im Browser lässt sich außerdem die **Chart-Fläche** wählen: Punkte (Standard), ohne Verlauf (nur die Linie)
-oder Pixel (Säulen aus Pixel-Zellen wie das Mosaik der Preiskarte).
+**Browser-Seite:** im Heimnetz unter **http://satoshi-deck.local** oder der IP (beides zeigt die Konfiguration
+am Display). Speichern gilt sofort, ohne Neustart; nur ein geändertes WLAN startet das Display neu.
+Unter **Schutz** lässt sich eine PIN (4–8 Ziffern) für die Seite setzen – dann fragt sie beim Öffnen danach
+(5 Fehlversuche sperren für eine Minute). PIN vergessen: am Display in der Konfiguration den QR-Code
+3 Sekunden gedrückt halten. Die Seite läuft unverschlüsselt im Heimnetz; die PIN schützt vor anderen im
+WLAN, nicht vor jemandem, der den Netzwerkverkehr mitliest.
+
+Im Browser lässt sich außerdem die **Akzentfarbe** und die **Chart-Fläche** wählen: Punkte (Standard), ohne
+Verlauf (nur die Linie) oder Pixel (Säulen aus Pixel-Zellen wie das Mosaik der Preiskarte).
+Unter **Regie** stehen Ein/Aus und die einzelnen Ereignisse.
 Unter **Wetter** wird der Ort fürs Wetter eingetragen, unter **News** die Quelle der Schlagzeilen (siehe oben).
 Unter **Karten** stehen dort dieselben Ein/Aus-Schalter wie im Kartenmenü, in der eingestellten
 Reihenfolge; mit ↑ und ↓ lassen sich die Karten auch dort verschieben.
@@ -200,7 +253,8 @@ Reihenfolge; mit ↑ und ↓ lassen sich die Karten auch dort verschieben.
    *Speichern*. Die Seite danach zeigt, sobald das Display neu gestartet ist, einen Knopf zurück zu den
    Einstellungen.
 
-Später lassen sich die Einstellungen im Heimnetz unter `http://<IP des Displays>` ändern; IP und QR-Code zeigt die Konfiguration (langer Druck).
+Später lassen sich die Einstellungen im Heimnetz unter `http://satoshi-deck.local` oder `http://<IP des Displays>`
+ändern; Adresse und QR-Code zeigt die Konfiguration (langer Druck).
 Ein Hostname wie `bitaxe.local` funktioniert auf dem ESP32 nicht, bitte die IP eintragen.
 
 Klappt die WLAN-Verbindung 25 Sekunden lang nicht, öffnet das Display das Setup-WLAN wieder.
@@ -235,8 +289,9 @@ Falls sich das Board nicht flashen lässt („No serial data received“): USB-K
 |-------|---------|
 | `main/board.c` | Pins, ST7796 über i80, FT6336U-Touch über I2C, LVGL-Anbindung |
 | `main/ui.c` | alle Karten im Strike-Stil, Chart und Mosaik als vorgerenderte Bilder, Einstellungen, Menü |
-| `main/data.c` | Abruf von CoinGecko, mempool.space, der AxeOS-API, Open-Meteo (Wetter) und der News (JSON und RSS), Demo-Werte |
-| `main/net.c` | WLAN, Uhrzeit (NTP), Setup-Portal |
+| `main/data.c` | Abruf von CoinGecko, Kraken, mempool.space, der AxeOS-API, Open-Meteo (Wetter) und der News (JSON und RSS), Demo-Werte |
+| `main/regie.c` | Regie: erkennt Ereignisse in den Daten (am Rechner testbar, `tools/regie_test.c`) |
+| `main/net.c` | WLAN, Uhrzeit (NTP), Setup-Portal, Browser-Seite, mDNS |
 | `main/settings.c` | Einstellungen im NVS |
 | `main/fonts/` | mit `lv_font_conv` erzeugte Schriften |
 

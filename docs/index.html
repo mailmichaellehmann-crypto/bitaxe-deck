@@ -315,7 +315,8 @@ footer a{color:var(--text2)}
         <ul class="list">
           <li><span>Wischen</span><span>Nach links oder rechts zur nächsten Karte – endlos im Kreis.</span></li>
           <li><span>Rand tippen</span><span>Linkes oder rechtes Viertel des Bildschirms: eine Karte zurück oder weiter.</span></li>
-          <li><span>Lang drücken</span><span>Einstellungen: Währung, Preisalarm, Seitenwechsel, Nachtmodus, Neuer Block, Chart-Zeitraum, Helligkeit und Update-Prüfung.</span></li>
+          <li><span>Lang drücken</span><span>Einstellungen: Währung, Preisalarm, Seitenwechsel, Nachtmodus, Regie, Chart-Zeitraum, Helligkeit und Update-Prüfung.</span></li>
+          <li><span>Regie</span><span>Passiert etwas – neuer Block, Kurssprung, Gebührenspitze, Miner zu heiß, neue Schlagzeile –, zeigt das Deck 15 Sekunden die passende Karte und kehrt zurück.</span></li>
           <li><span>Kartenmenü</span><span>Direkt zu jeder Karte springen, Karten ein- oder ausschalten und per Halten und Ziehen umsortieren.</span></li>
           <li><span>Chart halten</span><span>Fadenkreuz mit Preis und Uhrzeit an jeder Stelle.</span></li>
         </ul>
@@ -325,11 +326,13 @@ footer a{color:var(--text2)}
         <ul class="list">
           <li><span>Verbindung</span><span>WLAN und IP-Adresse des Bitaxe.</span></li>
           <li><span>Preisalarm</span><span>Obere und untere Grenze – das Display meldet sich bis zu 15 Sekunden, wenn der Kurs sie überschreitet. Nachts bleibt es still.</span></li>
-          <li><span>Anzeige</span><span>Nachtmodus-Zeiten und -Farbe, Uhr (LED-Punkte oder klassisch), Chart-Fläche (Punkte, Linie, Pixel), automatische Updates.</span></li>
+          <li><span>Anzeige</span><span>Akzentfarbe, Nachtmodus-Zeiten und -Farbe, Uhr (LED-Punkte oder klassisch), Chart-Fläche (Punkte, Linie, Pixel), automatische Updates.</span></li>
+          <li><span>Regie</span><span>Ein oder aus, und welche Ereignisse eine Karte einblenden dürfen.</span></li>
           <li><span>Mining-Kosten</span><span>Strompreis (Standard 30 ct/kWh) und Zurücksetzen des Stromzählers.</span></li>
           <li><span>Wetter</span><span>Ort als Name, Postleitzahl oder Koordinaten – das Display zeigt, was es gefunden hat.</span></li>
           <li><span>News</span><span>Quelle der Schlagzeilen: Crypto Vision, Blocktrainer oder Bitcoin Magazine.</span></li>
           <li><span>Karten</span><span>Dieselben Ein/Aus-Schalter wie im Kartenmenü, dazu die Reihenfolge mit ↑ und ↓.</span></li>
+          <li><span>Schutz</span><span>Optionale PIN für die Seite. Alles gilt sofort, ohne Neustart; erreichbar unter satoshi-deck.local.</span></li>
         </ul>
       </div>
     </div>
@@ -449,7 +452,7 @@ const CARDS = [
   ["USD / EUR", "karte-usd-eur", "Beide Kurse untereinander, jeweils mit der Änderung über 24 Stunden."],
   ["Chart", "karte-chart", "24 Stunden bis 1 Jahr mit Hoch und Tief. Finger halten zeigt Preis und Zeit. Als Punkte, Linie oder Pixel."],
   ["Block", "karte-block", "Blockhöhe, Alter und Pool des letzten Blocks und die Blöcke bis zum Halving."],
-  ["Neuer Block", "karte-neuer-block", "Die letzten fünf Blöcke als Kette. Bei jedem neuen Block fällt ein pinker Pixel-Block hinein."],
+  ["Neuer Block", "karte-neuer-block", "Die letzten fünf Blöcke als Kette, jeder als Porträt seines echten Hashes. Bei jedem neuen Block fällt einer hinein."],
   ["Halving", "karte-halving", "Pixel-Sand über den ganzen Bildschirm: geschürfte Blöcke der Epoche, Restblöcke, geschätztes Datum."],
   ["Gebühren", "karte-gebuehren", "Niedrig, mittel und hoch in sat/vB und in deiner Währung, dazu Sats pro Dollar."],
   ["Difficulty", "karte-difficulty", "Erwartete Anpassung, Fortschritt der Periode und Blöcke bis zum Retarget."],

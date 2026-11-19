@@ -18,6 +18,8 @@ typedef enum { MINER_DEMO = 0, MINER_ONLINE, MINER_OFFLINE } miner_mode_t;
 
 typedef struct {
     uint32_t height;
+    uint8_t hash[32]; // Block-Hash, wie er geschrieben wird (führende Nullen vorn)
+    bool has_hash;
     char pool[24];
     float median_fee;
     uint32_t tx_count;
@@ -81,6 +83,7 @@ typedef struct {
     bool price_ok;
     double usd, eur, chg24, chg24_eur;
     uint32_t price_ver;
+    int64_t price_ms, chart_ms, net_ms; // letzter erfolgreicher Abruf (ms seit Start, 0 = noch nie)
 
     // Preis-Chart
     chart_range_t chart_range;
@@ -141,3 +144,4 @@ void data_request_chart(chart_range_t r);
 int data_hist_copy(float *hash, float *temp, int max); // gibt Anzahl zurück
 void data_energy_save(void);  // Stromzähler sofort sichern (z. B. vor einem Neustart)
 void data_energy_reset(void); // Stromzähler auf 0 setzen
+void data_refresh(void);      // nach geänderten Einstellungen: Wetter, News und Bitaxe sofort neu laden

@@ -58,6 +58,8 @@ static esp_err_t http_evt(esp_http_client_event_t *e)
     return ESP_OK;
 }
 
+static _Thread_local int t_status; // HTTP-Status des letzten Abrufs dieser Task (0 = keine Antwort)
+
 // Lädt eine URL komplett (Puffer im PSRAM, mit free freigeben; NULL bei Fehler)
 static char *http_text(const char *url, int timeout_ms, const char *accept, char *err, int errlen)
 {
@@ -77,6 +79,7 @@ static char *http_text(const char *url, int timeout_ms, const char *accept, char
     esp_err_t r = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
     esp_http_client_cleanup(c);
+    t_status = r == ESP_OK ? status : 0;
     if (r == ESP_OK && status == 200 && b.buf) return b.buf;
     if (err) {
         if (r != ESP_OK) snprintf(err, errlen, "%s", r == ESP_ERR_HTTP_CONNECT ? "Keine Verbindung" : esp_err_to_name(r));
@@ -135,70 +138,192 @@ static double parse_diff(const cJSON *o, const char *k)
 }
 
 // ------------------------------------------------------------------ Markt
+// Kurs und Chart kommen von CoinGecko. Drosselt CoinGecko (HTTP 429) oder fällt es aus, springt Kraken ein
+// (öffentliche Kerzen, ohne Schlüssel, USD und EUR), für den Kurs zuletzt mempool.space.
+
+static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
+
+static int64_t s_cg_pause; // CoinGecko bis dahin nicht fragen (ms)
+
+static bool cg_ready(void) { return now_ms() >= s_cg_pause; }
+
+// nach „Too Many Requests“ 5 Minuten Ruhe, nach anderen Fehlern 1 Minute
+static void cg_result(bool ok)
+{
+    if (!ok) s_cg_pause = now_ms() + (t_status == 429 ? 5 : 1) * 60000;
+}
+
+// Kraken-Kerzen ab since: Zeilen [Zeit, Eröffnung, Hoch, Tief, Schluss, …]; *root gibt der Aufrufer frei
+static const cJSON *kraken_ohlc(bool eur, int interval_min, int64_t since, cJSON **root)
+{
+    char url[128];
+    snprintf(url, sizeof(url), "https://api.kraken.com/0/public/OHLC?pair=%s&interval=%d&since=%lld", eur ? "XBTEUR" : "XBTUSD",
+             interval_min, (long long)since);
+    *root = http_json(url, 12000, NULL, 0);
+    const cJSON *r;
+    cJSON_ArrayForEach(r, cJSON_GetObjectItem(*root, "result")) if (cJSON_IsArray(r) && cJSON_GetArraySize(r) >= 2) return r;
+    return NULL;
+}
+
+// Zahl aus einer Kerze (Zeit als Zahl, Kurse als Text)
+static double krow(const cJSON *row, int i)
+{
+    const cJSON *v = cJSON_GetArrayItem(row, i);
+    return cJSON_IsString(v) ? strtod(v->valuestring, NULL) : cJSON_IsNumber(v) ? v->valuedouble : 0;
+}
+
+// Kurs und 24h-Änderung aus den Stundenkerzen der letzten 25 Stunden
+static bool kraken_price(bool eur, double *px, double *chg)
+{
+    int64_t now = time(NULL);
+    cJSON *root;
+    const cJSON *rows = kraken_ohlc(eur, 60, now - 25 * 3600, &root), *r;
+    double last = 0, ago = 0;
+    cJSON_ArrayForEach(r, rows)
+    {
+        double t = krow(r, 0), c = krow(r, 4);
+        if (c <= 0) continue;
+        if (!ago || t + 3600 <= now - 24 * 3600 + 1800) ago = c; // Schlusskurs rund 24 h zurück
+        last = c;
+    }
+    cJSON_Delete(root);
+    if (last <= 0 || ago <= 0) return false;
+    *px = last;
+    *chg = (last / ago - 1) * 100;
+    return true;
+}
 
 static void fetch_price(void)
 {
-    cJSON *j = http_json("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,eur&include_24hr_change=true", 10000, NULL, 0);
-    const cJSON *b = j ? cJSON_GetObjectItem(j, "bitcoin") : NULL;
-    if (b) {
-        data_lock();
-        s_d.usd = jnum(b, "usd", s_d.usd);
-        s_d.eur = jnum(b, "eur", s_d.eur);
-        s_d.chg24 = jnum(b, "usd_24h_change", 0);
-        s_d.chg24_eur = jnum(b, "eur_24h_change", 0);
-        s_d.price_ok = true;
-        s_d.price_ver++;
-        data_unlock();
-    } else { // Ausweichquelle
-        cJSON *m = http_json("https://mempool.space/api/v1/prices", 10000, NULL, 0);
-        if (m) {
-            data_lock();
-            s_d.usd = jnum(m, "USD", s_d.usd);
-            s_d.eur = jnum(m, "EUR", s_d.eur);
-            s_d.price_ok = true;
-            s_d.price_ver++;
-            data_unlock();
-            cJSON_Delete(m);
+    double usd = 0, eur = 0, c_usd = 0, c_eur = 0;
+    bool ok = false, chg = false;
+    if (cg_ready()) {
+        cJSON *j = http_json("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,eur&include_24hr_change=true", 10000, NULL, 0);
+        const cJSON *b = cJSON_GetObjectItem(j, "bitcoin");
+        if (b) {
+            usd = jnum(b, "usd", 0);
+            eur = jnum(b, "eur", 0);
+            c_usd = jnum(b, "usd_24h_change", 0);
+            c_eur = jnum(b, "eur_24h_change", 0);
+            ok = chg = usd > 0 && eur > 0;
         }
+        cg_result(ok);
+        cJSON_Delete(j);
+    }
+    if (!ok) ok = chg = kraken_price(false, &usd, &c_usd) && kraken_price(true, &eur, &c_eur);
+    if (!ok) { // letzte Ausweichquelle: nur der Kurs, die 24h-Änderung bleibt stehen
+        cJSON *m = http_json("https://mempool.space/api/v1/prices", 10000, NULL, 0);
+        usd = jnum(m, "USD", 0);
+        eur = jnum(m, "EUR", 0);
+        ok = usd > 0 && eur > 0;
+        cJSON_Delete(m);
+    }
+    if (!ok) return;
+    data_lock();
+    s_d.usd = usd;
+    s_d.eur = eur;
+    if (chg) {
+        s_d.chg24 = c_usd;
+        s_d.chg24_eur = c_eur;
+    }
+    s_d.price_ok = true;
+    s_d.price_ms = now_ms();
+    s_d.price_ver++;
+    data_unlock();
+}
+
+// Kursreihe für den Chart: Zeit in ms, Kurs; Felder im PSRAM
+typedef struct {
+    int n;
+    double *t, *v;
+} series_t;
+
+static bool series_alloc(series_t *s, int n)
+{
+    s->n = 0;
+    s->t = heap_caps_malloc(sizeof(double) * n * 2, MALLOC_CAP_SPIRAM);
+    s->v = s->t ? s->t + n : NULL;
+    return s->t != NULL;
+}
+
+static bool chart_coingecko(chart_range_t r, bool eur, series_t *s)
+{
+    static const int days[] = {1, 7, 30, 365};
+    char url[160];
+    snprintf(url, sizeof(url), "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=%s&days=%d", eur ? "eur" : "usd", days[r]);
+    cJSON *j = http_json(url, 15000, NULL, 0);
+    const cJSON *prices = cJSON_GetObjectItem(j, "prices"), *p;
+    int n = cJSON_GetArraySize(prices);
+    if (n >= 2 && series_alloc(s, n)) cJSON_ArrayForEach(p, prices)
+    {
+        const cJSON *t = cJSON_GetArrayItem(p, 0), *v = cJSON_GetArrayItem(p, 1);
+        if (!cJSON_IsNumber(t) || !cJSON_IsNumber(v) || s->n >= n) continue;
+        s->t[s->n] = t->valuedouble;
+        s->v[s->n++] = v->valuedouble;
     }
     cJSON_Delete(j);
+    return s->n >= 2;
+}
+
+static bool chart_kraken(chart_range_t r, bool eur, series_t *s)
+{
+    static const int days[] = {1, 7, 30, 365}, interval[] = {5, 15, 60, 1440}; // je höchstens 720 Kerzen
+    int64_t now = time(NULL);
+    cJSON *root;
+    const cJSON *rows = kraken_ohlc(eur, interval[r], now - days[r] * 86400LL, &root), *row;
+    int n = cJSON_GetArraySize(rows);
+    if (n >= 2 && series_alloc(s, n)) cJSON_ArrayForEach(row, rows)
+    {
+        double t = krow(row, 0) + interval[r] * 60, c = krow(row, 4); // Schlusskurs am Ende der Kerze
+        if (c <= 0 || s->n >= n) continue;
+        s->t[s->n] = (t < now ? t : now) * 1000.0;
+        s->v[s->n++] = c;
+    }
+    cJSON_Delete(root);
+    return s->n >= 2;
 }
 
 static void fetch_chart(chart_range_t r)
 {
-    static const int days[] = {1, 7, 30, 365};
-    char url[160];
-    snprintf(url, sizeof(url), "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=%s&days=%d", g_settings.currency ? "eur" : "usd", days[r]);
-    cJSON *j = http_json(url, 15000, NULL, 0);
-    const cJSON *prices = j ? cJSON_GetObjectItem(j, "prices") : NULL;
-    int n = cJSON_GetArraySize(prices);
-    if (n < 2) {
+    static int have = -1; // Zeitraum der gespeicherten Kurve
+    bool eur = g_settings.currency;
+    static bool have_eur;
+    series_t s = {0};
+    bool ok = false;
+    if (cg_ready()) {
+        ok = chart_coingecko(r, eur, &s);
+        cg_result(ok);
+    }
+    if (!ok) {
+        free(s.t);
+        s = (series_t){0};
+        ok = chart_kraken(r, eur, &s);
+    }
+    if (!ok) { // die alte Kurve bleibt stehen, wenn sie zum Zeitraum passt (die Karte zeigt ihr Alter)
+        free(s.t);
         data_lock();
-        if (s_d.chart_range == r) { s_d.chart_ok = false; s_d.chart_ver++; }
+        if (s_d.chart_range == r) {
+            if (have != (int)r || have_eur != eur) s_d.chart_ok = false;
+            s_d.chart_ver++; // die Karte neu zeichnen lassen (nimmt „LÄDT …“ weg)
+        }
         data_unlock();
-        cJSON_Delete(j);
         return;
     }
     // In Buckets mitteln -> CHART_PTS Punkte
     float out[CHART_PTS];
-    int outn = n < CHART_PTS ? n : CHART_PTS;
+    int n = s.n, outn = n < CHART_PTS ? n : CHART_PTS;
     double mn = 1e18, mx = 0;
     for (int i = 0; i < outn; i++) {
         int a = (int)((int64_t)i * n / outn), e = (int)((int64_t)(i + 1) * n / outn);
         if (e <= a) e = a + 1;
-        double s = 0;
-        int c = 0;
+        double sum = 0;
         for (int k = a; k < e; k++) {
-            const cJSON *p = cJSON_GetArrayItem(prices, k);
-            double v = cJSON_GetArrayItem(p, 1)->valuedouble;
-            if (v < mn) mn = v;
-            if (v > mx) mx = v;
-            s += v;
-            c++;
+            if (s.v[k] < mn) mn = s.v[k];
+            if (s.v[k] > mx) mx = s.v[k];
+            sum += s.v[k];
         }
-        out[i] = (float)(s / c);
+        out[i] = (float)(sum / (e - a));
     }
-    const cJSON *first = cJSON_GetArrayItem(prices, 0), *last = cJSON_GetArrayItem(prices, n - 1);
     data_lock();
     if (r == RANGE_24H) { // Sparkline mit 60 Punkten
         s_d.spark_n = 60;
@@ -210,15 +335,18 @@ static void fetch_chart(chart_range_t r)
         s_d.chart_n = outn;
         s_d.chart_min = mn;
         s_d.chart_max = mx;
-        s_d.chart_first = cJSON_GetArrayItem(first, 1)->valuedouble;
-        s_d.chart_last = cJSON_GetArrayItem(last, 1)->valuedouble;
-        s_d.chart_t0 = (int64_t)cJSON_GetArrayItem(first, 0)->valuedouble;
-        s_d.chart_t1 = (int64_t)cJSON_GetArrayItem(last, 0)->valuedouble;
+        s_d.chart_first = s.v[0];
+        s_d.chart_last = s.v[n - 1];
+        s_d.chart_t0 = (int64_t)s.t[0];
+        s_d.chart_t1 = (int64_t)s.t[n - 1];
         s_d.chart_ok = true;
+        s_d.chart_ms = now_ms();
         s_d.chart_ver++;
+        have = r;
+        have_eur = eur;
     }
     data_unlock();
-    cJSON_Delete(j);
+    free(s.t);
 }
 
 // ------------------------------------------------------------------ Wetter (Open-Meteo, ohne Schlüssel)
@@ -313,9 +441,15 @@ static double jarr(const cJSON *o, const char *k, int i, double def)
 // gibt die Wartezeit bis zum nächsten Abruf zurück (ms)
 static int fetch_weather(void)
 {
-    const char *place = g_settings.wx_place;
+    char place[sizeof(g_settings.wx_place)];
+    data_lock(); // die Browser-Seite ändert die Einstellungen im Betrieb
+    strlcpy(place, g_settings.wx_place, sizeof(place));
+    bool ll = g_settings.wx_ll;
+    float ll_lat = g_settings.wx_lat, ll_lon = g_settings.wx_lon;
+    data_unlock();
 #ifdef CONFIG_DECK_SNAPSHOT
-    place = "Berlin"; // Aufnahmen immer mit demselben Ort
+    strlcpy(place, "Berlin", sizeof(place)); // Aufnahmen immer mit demselben Ort
+    ll = false;
 #endif
     if (!place[0]) {
         data_lock();
@@ -324,15 +458,11 @@ static int fetch_weather(void)
         wx_error("Ort im Browser eintragen");
         return 60000;
     }
-    bool ll = g_settings.wx_ll;
-#ifdef CONFIG_DECK_SNAPSHOT
-    ll = false;
-#endif
     if (strcmp(s_wx_for, place)) {
         if (ll) { // im Browser aus der Ortssuche gewählt
             data_lock();
-            s_d.wx.lat = g_settings.wx_lat;
-            s_d.wx.lon = g_settings.wx_lon;
+            s_d.wx.lat = ll_lat;
+            s_d.wx.lon = ll_lon;
             strlcpy(s_d.wx.place, place, sizeof(s_d.wx.place));
             s_d.wx.region[0] = 0;
             data_unlock();
@@ -586,9 +716,8 @@ static int fetch_news(void)
 // Abruf (ohne Schlüssel; schont das Limit von CoinGecko). Je Kerze der Schlusskurs am Ende der Kerze.
 static void fetch_series(void)
 {
-    cJSON *j = http_json("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=15", 15000, NULL, 0);
-    const cJSON *res = cJSON_GetObjectItem(j, "result"), *rows = NULL, *r;
-    cJSON_ArrayForEach(r, res) if (cJSON_IsArray(r)) { rows = r; break; } // „XXBTZUSD“
+    cJSON *j;
+    const cJSON *rows = kraken_ohlc(false, 15, 0, &j), *r; // ohne since: die letzten 720 Kerzen
     uint32_t now = time(NULL);
     if (s_d.px && cJSON_GetArraySize(rows) >= 2) {
         data_lock();
@@ -653,6 +782,12 @@ static void fetch_network(void)
             if (s_d.blocks_n < BLOCKS_N) {
                 block_info_t *bi = &s_d.blocks[s_d.blocks_n++];
                 bi->height = (uint32_t)jnum(b, "height", 0);
+                const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(b, "id"));
+                bi->has_hash = id && strlen(id) == 64;
+                for (int k = 0; bi->has_hash && k < 32; k++) {
+                    char hx[3] = {id[k * 2], id[k * 2 + 1], 0};
+                    bi->hash[k] = (uint8_t)strtoul(hx, NULL, 16);
+                }
                 bi->tx_count = (uint32_t)jnum(b, "tx_count", 0);
                 bi->timestamp = (int64_t)jnum(b, "timestamp", 0);
                 bi->median_fee = ex ? (float)jnum(ex, "medianFee", 0) : 0;
@@ -686,6 +821,7 @@ static void fetch_network(void)
         s_d.fee_eco = (int)jnum(fees, "economyFee", 0);
     }
     if (any) { s_d.net_ok = true; s_d.net_ver++; }
+    if (cJSON_IsArray(blocks) && s_d.blocks_n) s_d.net_ms = now_ms();
     data_unlock();
     cJSON_Delete(blocks);
     cJSON_Delete(hr);
@@ -923,14 +1059,18 @@ static void miner_task(void *arg)
     }
 }
 
-static void data_task(void *arg)
+// Internet-Abrufe in drei unabhängigen Tasks, damit eine hängende Quelle die anderen nicht aufhält:
+// Markt (Kurs, Chart), Kette (mempool.space) und Extras (Wetter, News, Kursreihe).
+static bool online(void) { return net_state() == NET_CONNECTED && net_time_valid(); }
+
+static void market_task(void *arg)
 {
-    int64_t next_price = 0, next_net = 0, next_chart = 0, next_wx = 0, next_news = 0, next_px = 0;
+    int64_t next_price = 0, next_chart = 0;
     chart_range_t cur = (chart_range_t)g_settings.chart_range;
-    bool spark_loaded = true; // Sparkline wird nicht mehr angezeigt
+    uint8_t cur_eur = g_settings.currency;
     for (;;) {
-        int64_t now = esp_timer_get_time() / 1000;
-        if (net_state() == NET_CONNECTED && net_time_valid()) {
+        int64_t now = now_ms();
+        if (online()) {
             int req = s_chart_req;
             if (req >= 0) {
                 s_chart_req = -1;
@@ -940,29 +1080,54 @@ static void data_task(void *arg)
                 data_unlock();
                 next_chart = 0;
             }
+            if (cur_eur != g_settings.currency) { // Währung gewechselt: Chart in der neuen Währung
+                cur_eur = g_settings.currency;
+                next_chart = 0;
+            }
             if (now >= next_price) {
                 fetch_price();
                 next_price = now + 60000;
             }
             if (now >= next_chart) {
                 fetch_chart(cur);
-                if (cur == RANGE_24H) spark_loaded = true;
                 next_chart = now + 5 * 60000;
             }
-            if (!spark_loaded) {
-                fetch_chart(RANGE_24H);
-                spark_loaded = true;
-            }
-            if (now >= next_net) {
-                fetch_network();
-                next_net = now + 30000;
-            }
-            if (now >= next_wx) next_wx = esp_timer_get_time() / 1000 + fetch_weather();
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
+
+static void chain_task(void *arg)
+{
+    for (;;) {
+        int64_t t0 = now_ms();
+        if (online()) fetch_network();
+        int64_t left = 30000 - (now_ms() - t0);
+        vTaskDelay(pdMS_TO_TICKS(online() ? (left > 1000 ? left : 1000) : 500));
+    }
+}
+
+static volatile bool s_refresh; // Einstellungen geändert: Wetter und News sofort neu laden
+
+void data_refresh(void) { s_refresh = true; }
+
+static void extra_task(void *arg)
+{
+    int64_t next_wx = 0, next_news = 0, next_px = 0;
+    for (;;) {
+        int64_t now = now_ms();
+        if (s_refresh) {
+            s_refresh = false;
+            s_wx_for[0] = 0; // Ort neu auflösen
+            next_wx = next_news = 0;
+        }
+        if (online()) {
+            if (now >= next_wx) next_wx = now_ms() + fetch_weather();
             if ((g_settings.card_mask >> 13) & 1) { // nur, wenn die News-Karte an ist
-                if (now >= next_news) next_news = esp_timer_get_time() / 1000 + fetch_news();
+                if (now >= next_news) next_news = now_ms() + fetch_news();
                 if (now >= next_px) {
                     fetch_series();
-                    next_px = now + 10 * 60000;
+                    next_px = now_ms() + 10 * 60000;
                 }
             }
         }
@@ -970,9 +1135,13 @@ static void data_task(void *arg)
     }
 }
 
+static void *json_malloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
+
 void data_start(void)
 {
     s_mtx = xSemaphoreCreateMutex();
+    // JSON-Bäume in den PSRAM: große Antworten (Chart, Kerzen) belasten sonst den knappen internen Speicher
+    cJSON_InitHooks(&(cJSON_Hooks){.malloc_fn = json_malloc, .free_fn = free});
     s_d.chart_range = (chart_range_t)g_settings.chart_range;
     s_d.hist_demo = true;
     s_d.px = heap_caps_calloc(1, sizeof(px_series_t), MALLOC_CAP_SPIRAM);
@@ -982,6 +1151,8 @@ void data_start(void)
         double t = i * 15.0;
         hist_push(1205 + sin(t / 420) * 30 + sin(t / 97) * 14, 61 + sin(t / 600) * 1.6);
     }
-    xTaskCreatePinnedToCore(data_task, "data", 10240, NULL, 3, NULL, 0);
+    xTaskCreatePinnedToCore(market_task, "markt", 10240, NULL, 3, NULL, 0);
+    xTaskCreatePinnedToCore(chain_task, "kette", 8192, NULL, 3, NULL, 0);
+    xTaskCreatePinnedToCore(extra_task, "extra", 8192, NULL, 3, NULL, 0);
     xTaskCreatePinnedToCore(miner_task, "miner", 6144, NULL, 3, NULL, 0);
 }

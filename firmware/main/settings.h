@@ -10,6 +10,9 @@ extern const char *const DECK_CARD_NAMES[DECK_CARDS];
 #define NIGHT_COLORS 6 // Farbtöne; danach als letzte Wahl „Originalfarben“
 extern const char *const NIGHT_COLOR_NAMES[NIGHT_COLORS + 1];
 extern const uint32_t NIGHT_COLOR_RGB[NIGHT_COLORS];
+#define ACCENTS 6 // Akzentfarben
+extern const char *const ACCENT_NAMES[ACCENTS];
+extern const uint32_t ACCENT_RGB[ACCENTS];
 #define NEWS_SOURCES 3
 extern const char *const NEWS_SOURCE_NAMES[NEWS_SOURCES];
 
@@ -28,7 +31,9 @@ typedef struct {
     uint8_t night_to;    // Stunde, bis zu der gedimmt wird
     uint8_t clock_style; // Uhr: 0 = klassisch, 3 = LED-Punktanzeige (1 war die Pixel-Uhr, 2 die Klappzahlen)
     uint8_t night_color; // Farbe im Nachtmodus: Index in NIGHT_COLOR_NAMES (NIGHT_COLORS = Originalfarben)
-    bool block_note;     // Hinweis bei neuem Block
+    bool regie_on;       // Regie: bei Ereignissen kurz die passende Karte zeigen (früher nur „Neuer Block“)
+    uint16_t regie_mask; // Ereignisse der Regie (Bits wie regie_ev_t in regie.h)
+    char web_pin[9];     // PIN für die Browser-Seite (4–8 Ziffern), leer = ohne
     uint8_t chart_range; // 0 = 24h, 1 = 7T, 2 = 30T, 3 = 1J
     uint8_t brightness;  // 5..100 %
     uint8_t chart_style; // Chart-Fläche: 0 = Punkte, 1 = ohne Verlauf, 2 = Pixel (Mosaik)
@@ -39,6 +44,7 @@ typedef struct {
     bool wx_ll;          // Koordinaten aus der Ortssuche im Browser (dann ohne eigene Suche)
     float wx_lat, wx_lon;
     uint8_t news_src;    // News-Quelle: Index in NEWS_SOURCE_NAMES
+    uint8_t accent;      // Akzentfarbe: Index in ACCENT_NAMES
 } deck_settings_t;
 
 extern deck_settings_t g_settings;

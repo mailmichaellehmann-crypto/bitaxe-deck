@@ -134,8 +134,11 @@ static void ws_event(void *arg, esp_event_base_t base, int32_t id, void *event_d
     }
 }
 
+static char s_host[64]; // Gerät, mit dem der Stream verbunden ist
+
 static void ws_start(const char *host)
 {
+    strlcpy(s_host, host, sizeof(s_host));
     char uri[96];
     snprintf(uri, sizeof(uri), "ws://%s/api/ws", host);
     esp_websocket_client_config_t cfg = {
@@ -182,6 +185,13 @@ static void shares_task(void *arg)
     const double sim_min = 256; // typische Mindest-Difficulty der ASIC-Ergebnisse
     for (;;) {
         ws_watch();
+        if (s_ws && strcmp(s_host, g_settings.bitaxe_host[0])) { // Adresse im Browser geändert
+            esp_websocket_client_destroy(s_ws);
+            s_ws = NULL;
+            shares_lock();
+            s_st.connected = false;
+            shares_unlock();
+        }
         if (!s_ws && g_settings.bitaxe_host[0][0] && net_state() == NET_CONNECTED) ws_start(g_settings.bitaxe_host[0]);
 
         shares_lock();

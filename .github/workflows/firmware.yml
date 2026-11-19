@@ -18,6 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Regie am Rechner testen
+        run: cc -Wall -I firmware/main firmware/tools/regie_test.c firmware/main/regie.c -lm -o /tmp/regie_test && /tmp/regie_test
+
       - name: Version aus dem Tag übernehmen
         if: startsWith(github.ref, 'refs/tags/v')
         run: echo "${GITHUB_REF_NAME#v}" > firmware/version.txt

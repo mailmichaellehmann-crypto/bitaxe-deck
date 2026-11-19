@@ -13,7 +13,8 @@ deck_settings_t g_settings = {
     .night_to = 7,
     .night_color = 0,
     .clock_style = 3,
-    .block_note = true,
+    .regie_on = true,
+    .regie_mask = 0xFFFF,
     .brightness = 80,
     .chart_style = 0,
     .auto_update = true,
@@ -23,6 +24,10 @@ deck_settings_t g_settings = {
 const char *const DECK_CARD_NAMES[DECK_CARDS] = {"Preis",    "USD / EUR", "Chart",      "Block", "Neuer Block", "Halving",
                                                  "Gebühren", "Difficulty", "Uhr",       "Wetter", "Bitaxe",     "Kosten",
                                                  "Lotterie", "News"};
+// Akzentfarben: keine darf einer anderen Farbe der Oberfläche gleichen (Weiß, Grün für „gestiegen“ …),
+// weil ein Wechsel im Betrieb alle Flächen in der alten Akzentfarbe umfärbt
+const char *const ACCENT_NAMES[ACCENTS] = {"Rosa", "Bitcoin-Orange", "Gold", "Mint", "Eisblau", "Lavendel"};
+const uint32_t ACCENT_RGB[ACCENTS] = {0xFFD4D4, 0xF7931A, 0xFFD98A, 0xA8F0C8, 0xA9D4FF, 0xD6C8FF};
 const char *const NEWS_SOURCE_NAMES[NEWS_SOURCES] = {"Crypto Vision", "Blocktrainer", "Bitcoin Magazine"};
 
 const char *const NIGHT_COLOR_NAMES[NIGHT_COLORS + 1] = {"Bernstein", "Tiefrot", "Kerzenlicht", "Rosé",
@@ -104,13 +109,16 @@ void settings_load(void)
     b = g_settings.currency; get_u8(h, "cur", &b); g_settings.currency = b;
     b = g_settings.alarm_on; get_u8(h, "al_on", &b); g_settings.alarm_on = b;
     b = g_settings.night_on; get_u8(h, "n_on", &b); g_settings.night_on = b;
-    b = g_settings.block_note; get_u8(h, "blk", &b); g_settings.block_note = b;
+    b = g_settings.regie_on; get_u8(h, "blk", &b); g_settings.regie_on = b;
+    nvs_get_u16(h, "rgm", &g_settings.regie_mask);
+    get_str(h, "pin", g_settings.web_pin, sizeof(g_settings.web_pin));
     b = g_settings.auto_update; get_u8(h, "aupd", &b); g_settings.auto_update = b;
     get_u8(h, "n_from", &g_settings.night_from);
     get_u8(h, "n_to", &g_settings.night_to);
     get_u8(h, "ncol", &g_settings.night_color);
     get_u8(h, "clk", &g_settings.clock_style);
     get_u8(h, "news", &g_settings.news_src);
+    get_u8(h, "acc", &g_settings.accent);
     get_u8(h, "range", &g_settings.chart_range);
     get_u8(h, "bright", &g_settings.brightness);
     get_u8(h, "cstyle", &g_settings.chart_style);
@@ -141,6 +149,7 @@ void settings_load(void)
     if (g_settings.night_color > NIGHT_COLORS) g_settings.night_color = 0;
     if (g_settings.clock_style != 0) g_settings.clock_style = 3; // Pixel-Uhr und Klappzahlen -> LED
     if (g_settings.news_src >= NEWS_SOURCES) g_settings.news_src = 0;
+    if (g_settings.accent >= ACCENTS) g_settings.accent = 0;
     if (g_settings.brightness < 5 || g_settings.brightness > 100) g_settings.brightness = 80;
 }
 
@@ -165,13 +174,16 @@ void settings_save(void)
     nvs_set_u8(h, "cur", g_settings.currency);
     nvs_set_u8(h, "al_on", g_settings.alarm_on);
     nvs_set_u8(h, "n_on", g_settings.night_on);
-    nvs_set_u8(h, "blk", g_settings.block_note);
+    nvs_set_u8(h, "blk", g_settings.regie_on);
+    nvs_set_u16(h, "rgm", g_settings.regie_mask);
+    nvs_set_str(h, "pin", g_settings.web_pin);
     nvs_set_u8(h, "aupd", g_settings.auto_update);
     nvs_set_u8(h, "n_from", g_settings.night_from);
     nvs_set_u8(h, "n_to", g_settings.night_to);
     nvs_set_u8(h, "ncol", g_settings.night_color);
     nvs_set_u8(h, "clk", g_settings.clock_style);
     nvs_set_u8(h, "news", g_settings.news_src);
+    nvs_set_u8(h, "acc", g_settings.accent);
     nvs_set_u8(h, "range", g_settings.chart_range);
     nvs_set_u8(h, "bright", g_settings.brightness);
     nvs_set_u8(h, "cstyle", g_settings.chart_style);

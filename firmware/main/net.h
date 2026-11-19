@@ -3,6 +3,7 @@
 
 #define DECK_AP_SSID "SatoshiDeck-Setup"
 #define DECK_AP_PASS "satoshi21"
+#define DECK_HOSTNAME "satoshi-deck" // im Heimnetz: http://satoshi-deck.local
 
 typedef enum {
     NET_CONNECTING = 0,
