@@ -3204,7 +3204,7 @@ static void regie_show(const regie_hit_t *h)
     if (h->ev == RG_SHARE && !card_on(card)) card = 10; // ohne Lotterie-Karte: Bitaxe
     if (!card_on(card)) return;
     if (card != s_cur) note_jump(card);
-    pill_show(s_rg, s_rg_lbl, h->text, W / 2, H - 38);
+    pill_show(s_rg, s_rg_lbl, h->text, W / 2, H - 52);
     lv_obj_fade_in(s_rg, 250, 0);
     s_rg_until = esp_timer_get_time() / 1000 + 6000;
 }
